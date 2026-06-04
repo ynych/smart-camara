@@ -70,7 +70,7 @@ start_services() {
     cd "$SCRIPT_DIR/backend" || { echo "      ✗ 后端目录不存在: $SCRIPT_DIR/backend"; exit 1; }
     
     # 初始化数据库
-    python -c "from database import engine, Base; from models import *; Base.metadata.create_all(bind=engine)" 2>/dev/null
+    python3 -c "from database import engine, Base; from models import *; Base.metadata.create_all(bind=engine)" 2>/dev/null
     
     nohup uvicorn main:app --host 0.0.0.0 --port 8155 > "$LOG_DIR/backend.log" 2>&1 &
     BACKEND_PID=$!
@@ -91,6 +91,8 @@ start_services() {
     # 检查并安装依赖
     if [ ! -d "node_modules" ] || [ ! -d "node_modules/vite" ]; then
         echo "      安装前端依赖..."
+        # 清理可能损坏的node_modules
+        rm -rf node_modules package-lock.json 2>/dev/null
         npm install 2>&1 | tail -5
     fi
     

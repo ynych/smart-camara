@@ -53,8 +53,11 @@ backend/3qrphqhi
 *.tmp
 *.bak
 
-# Content reference images (large files)
-content/
+# Content reference images (large files); keep structure docs in repo
+content/*
+!content/README.md
+!content/**/
+!content/**/.gitkeep
 
 # Plan working doc (contains sensitive info)
 plan.md

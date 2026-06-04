@@ -4,7 +4,7 @@ import uuid
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Requirement, LookbookTask, StyleTemplate
+from models import Requirement, LookbookTask, StyleTemplate, GeneratedImage
 from skills.lookbook_skill import LookbookSkill
 from tools.file_tool import FileTool
 from tools.material_tool import MaterialTool
@@ -102,6 +102,10 @@ def update_requirement(requirement_id: str, data: dict, db: Session = Depends(ge
         req.selected_style = data["selected_style"]
     if "user_edits" in data:
         req.user_edits = json.dumps(data["user_edits"], ensure_ascii=False)
+    if "reference_image_path" in data:
+        req.reference_image_path = data["reference_image_path"]
+    if "prompt_overrides" in data:
+        req.prompt_overrides = json.dumps(data["prompt_overrides"], ensure_ascii=False)
 
     db.commit()
     return {"message": "更新成功"}
@@ -133,15 +137,52 @@ def get_styles(db: Session = Depends(get_db)):
         ]
     }
 
+@router.post("/generate-prompt")
+def generate_prompt(data: dict):
+    """预生成prompt列表（不执行生图）"""
+    model_id = data.get("model_id")
+    clothing_ids = data.get("clothing_ids", [])
+    reference_id = data.get("reference_id")
+    scene_id = data.get("scene_id")
+    quantity = data.get("quantity", 4)
+    size = data.get("size", "3:4")
+    business_context = data.get("business_context") or {}
+    acceptance_criteria = data.get("acceptance_criteria") or ""
+
+    try:
+        criteria = acceptance_criteria or skill.build_acceptance_criteria(
+            size=size,
+            quantity=quantity,
+            business_context=business_context,
+        )
+        prompts = skill.build_prompts(
+            model_id,
+            clothing_ids,
+            reference_id,
+            quantity,
+            size=size,
+            scene_id=scene_id,
+            business_context=business_context,
+            acceptance_criteria=criteria,
+        )
+        return {"prompts": prompts, "acceptance_criteria": criteria}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/generate")
 async def generate_lookbook(data: dict):
     """开始生成Lookbook"""
     requirement_id = data.get("requirement_id")
-    if not requirement_id:
-        raise HTTPException(status_code=400, detail="缺少requirement_id")
+    quantity = data.get("quantity", 4)
+    reference_image_path = data.get("reference_image_path")
 
     try:
-        result = await skill.generate(requirement_id)
+        if data.get("model_id") or data.get("clothing_ids"):
+            result = await skill.generate_from_selection(data)
+        else:
+            if not requirement_id:
+                raise HTTPException(status_code=400, detail="缺少requirement_id")
+            result = await skill.generate(requirement_id, quantity=quantity, reference_image_path=reference_image_path)
         return {"message": "生成完成", "task_id": result["task_id"], "images": result["images"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -161,6 +202,9 @@ def get_tasks(status: str = Query(None), db: Session = Depends(get_db)):
                 "style_id": t.style_id,
                 "status": t.status,
                 "progress": t.progress,
+                "quantity": t.quantity,
+                "size": t.size,
+                "acceptance_criteria": t.acceptance_criteria,
                 "generated_images": json.loads(t.generated_images) if t.generated_images else [],
                 "error_message": t.error_message,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
@@ -182,6 +226,10 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
         "style_id": task.style_id,
         "status": task.status,
         "progress": task.progress,
+        "quantity": task.quantity,
+        "size": task.size,
+        "acceptance_criteria": task.acceptance_criteria,
+        "prompts": json.loads(task.prompt_overrides) if task.prompt_overrides else [],
         "generated_images": json.loads(task.generated_images) if task.generated_images else [],
         "error_message": task.error_message,
         "created_at": task.created_at.isoformat() if task.created_at else None,
@@ -205,3 +253,24 @@ def get_gallery(db: Session = Depends(get_db)):
             "created_at": task.created_at.isoformat() if task.created_at else None,
         })
     return {"gallery": results}
+
+@router.post("/images/{image_id}/review")
+def review_image(image_id: str, data: dict):
+    """标记生成图片是否合格，并记录反馈用于后续提示词优化。"""
+    status = data.get("status")
+    feedback = data.get("feedback", "")
+    try:
+        return skill.review_image(image_id, status, feedback)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.delete("/tasks/{task_id}")
+def delete_task(task_id: str, db: Session = Depends(get_db)):
+    """删除任务记录及关联验收图片记录。"""
+    task = db.query(LookbookTask).filter(LookbookTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    db.query(GeneratedImage).filter(GeneratedImage.task_id == task_id).delete()
+    db.delete(task)
+    db.commit()
+    return {"message": "任务已删除"}

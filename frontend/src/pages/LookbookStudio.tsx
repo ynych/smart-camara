@@ -1,515 +1,581 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Upload, Button, Steps, Card, Input, Progress, Row, Col, Image, message, Space, Tag, Spin, Descriptions, Radio, Popconfirm, Divider } from 'antd';
-import { CameraOutlined, ThunderboltOutlined, CheckCircleOutlined, UserOutlined, SkinOutlined, PlusOutlined, DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
-import { uploadSourceImage, analyzeRequirement, getStyles, generateLookbook, updateRequirement, getTask, getTaskList, deleteTask } from '../services/api';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Collapse,
+  Divider,
+  Image,
+  Input,
+  InputNumber,
+  Modal,
+  Progress,
+  Row,
+  Select,
+  Space,
+  Spin,
+  Steps,
+  Tag,
+  message,
+} from 'antd';
+import {
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  EditOutlined,
+  EnvironmentOutlined,
+  PictureOutlined,
+  ReloadOutlined,
+  RocketOutlined,
+  SkinOutlined,
+  UserOutlined,
+  WarningOutlined,
+} from '@ant-design/icons';
+import {
+  checkClothingConflict,
+  generateLookbook,
+  generatePrompt,
+  getGroupedMaterials,
+  getTaskList,
+  reviewGeneratedImage,
+} from '../services/api';
+import { toContentUrl } from '../utils/contentUrl';
 
-const { Dragger } = Upload;
 const { TextArea } = Input;
+
+interface PromptItem {
+  index: number;
+  angle_name: string;
+  prompt: string;
+}
+
+interface ClothingItem {
+  id: string;
+  outfit_set: string;
+  file_path: string;
+  name?: string;
+  sub_type?: string;
+}
+
+const sizeOptions = [
+  { label: '1:1 主图', value: '1:1' },
+  { label: '3:4 详情页', value: '3:4' },
+  { label: '9:16 移动端', value: '9:16' },
+];
 
 const LookbookStudio: React.FC = () => {
   const [currentStep, setCurrentStep] = useState(0);
-  const [requirementId, setRequirementId] = useState<string | null>(null);
-  const [modelImage, setModelImage] = useState<string | null>(null);
-  const [clothingImages, setClothingImages] = useState<string[]>([]);
-  const [description, setDescription] = useState('');
-  const [features, setFeatures] = useState<any>(null);
-  const [styles, setStyles] = useState<any[]>([]);
-  const [selectedStyle, setSelectedStyle] = useState<string>('');
+  const [materials, setMaterials] = useState<any>({});
+  const [materialsLoading, setMaterialsLoading] = useState(false);
   const [tasks, setTasks] = useState<any[]>([]);
-  const [images, setImages] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const pollingTimers = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
-  // 加载风格列表
-  useEffect(() => {
-    getStyles().then(res => setStyles(res.data.styles || [])).catch(() => {});
+  const [selectedModel, setSelectedModel] = useState<any>(null);
+  const [selectedClothing, setSelectedClothing] = useState<ClothingItem[]>([]);
+  const [selectedReference, setSelectedReference] = useState<any>(null);
+  const [selectedScene, setSelectedScene] = useState<any>(null);
+  const [conflictWarning, setConflictWarning] = useState('');
+
+  const [size, setSize] = useState('3:4');
+  const [quantity, setQuantity] = useState(4);
+  const [merchantNeed, setMerchantNeed] = useState('电商Lookbook效果图，用于商品详情页和投放素材');
+  const [targetAudience, setTargetAudience] = useState('关注质感、通勤和日常穿搭的女性用户');
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
+  const [prompts, setPrompts] = useState<PromptItem[]>([]);
+
+  const [generatingPrompts, setGeneratingPrompts] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [taskStatus, setTaskStatus] = useState('');
+  const [taskProgress, setTaskProgress] = useState(0);
+  const [generatedImages, setGeneratedImages] = useState<any[]>([]);
+
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [rejectImageId, setRejectImageId] = useState('');
+  const [rejectFeedback, setRejectFeedback] = useState('');
+
+  const loadMaterials = useCallback(async () => {
+    setMaterialsLoading(true);
+    try {
+      const res = await getGroupedMaterials();
+      setMaterials(res.data || {});
+    } catch {
+      message.error('加载素材失败');
+    } finally {
+      setMaterialsLoading(false);
+    }
   }, []);
 
-  // 加载任务列表
   const loadTasks = useCallback(async () => {
     try {
       const res = await getTaskList();
       setTasks(res.data.tasks || []);
-    } catch (e) {
+    } catch {
       // ignore
     }
   }, []);
 
   useEffect(() => {
+    loadMaterials();
     loadTasks();
-    return () => {
-      // 清理所有轮询定时器
-      pollingTimers.current.forEach(timer => clearInterval(timer));
-      pollingTimers.current.clear();
-    };
-  }, [loadTasks]);
+  }, [loadMaterials, loadTasks]);
 
-  // 上传模特图
-  const handleUploadModel = async (file: File) => {
-    try {
-      setLoading(true);
-      const res = await uploadSourceImage(file, '模特图');
-      setModelImage(res.data.file_path);
-      if (res.data.requirement_id) {
-        setRequirementId(res.data.requirement_id);
-      }
-      message.success('模特图上传成功');
-    } catch (e: any) {
-      message.error('上传失败: ' + (e.response?.data?.detail || e.message));
-    } finally {
-      setLoading(false);
-    }
-    return false;
-  };
-
-  // 上传服装图（支持多张）
-  const handleUploadClothing = async (file: File) => {
-    try {
-      setLoading(true);
-      const res = await uploadSourceImage(file, description || '服装图');
-      setClothingImages(prev => [...prev, res.data.file_path]);
-      if (res.data.requirement_id) {
-        setRequirementId(res.data.requirement_id);
-      }
-      message.success('服装图上传成功');
-    } catch (e: any) {
-      message.error('上传失败: ' + (e.response?.data?.detail || e.message));
-    } finally {
-      setLoading(false);
-    }
-    return false;
-  };
-
-  // 删除某张服装图
-  const handleRemoveClothing = (index: number) => {
-    setClothingImages(prev => prev.filter((_, i) => i !== index));
-  };
-
-  // 步骤1: 分析特征
-  const handleAnalyze = async () => {
-    if (!requirementId) return;
-    try {
-      setLoading(true);
-      const res = await analyzeRequirement(requirementId, description);
-      setFeatures(res.data.features);
-      setCurrentStep(2);
-      message.success('分析完成');
-    } catch (e: any) {
-      message.error('分析失败: ' + (e.response?.data?.detail || e.message));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 选择风格
-  const handleSelectStyle = (styleId: string) => {
-    setSelectedStyle(styleId);
-  };
-
-  // 轮询任务状态
-  const pollTaskStatus = useCallback((taskId: string) => {
-    // 如果已有该任务的轮询，先清除
-    if (pollingTimers.current.has(taskId)) {
-      clearInterval(pollingTimers.current.get(taskId));
-    }
-
-    const timer = setInterval(async () => {
-      try {
-        const res = await getTask(taskId);
-        const taskData = res.data;
-        setTasks(prev => {
-          const exists = prev.some(t => t.id === taskId);
-          if (exists) {
-            return prev.map(t => t.id === taskId ? { ...t, ...taskData } : t);
-          }
-          return prev;
-        });
-
-        if (taskData.status === 'completed' || taskData.status === 'failed') {
-          clearInterval(timer);
-          pollingTimers.current.delete(taskId);
-
-          if (taskData.status === 'completed') {
-            setImages(taskData.generated_images || []);
-            setCurrentStep(4);
-            message.success('Lookbook生成完成！');
-          } else {
-            message.error('生成失败');
-          }
-        }
-      } catch (e) {
-        // ignore polling errors
-      }
-    }, 3000);
-
-    pollingTimers.current.set(taskId, timer);
-  }, []);
-
-  // 确认风格并生成（异步，不阻塞）
-  const handleConfirmAndGenerate = async () => {
-    if (!requirementId || !selectedStyle) {
-      message.warning('请先选择一种风格');
+  useEffect(() => {
+    if (selectedClothing.length < 2) {
+      setConflictWarning('');
       return;
     }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await checkClothingConflict(selectedClothing);
+        setConflictWarning((res.data?.conflicts || []).join('; '));
+      } catch {
+        setConflictWarning('');
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [selectedClothing]);
+
+  const toggleClothing = (item: any, outfitSetName: string) => {
+    const clothingItem: ClothingItem = {
+      id: item.id,
+      outfit_set: outfitSetName,
+      file_path: item.file_path,
+      name: item.name,
+      sub_type: item.sub_type || item.sub_category,
+    };
+    setSelectedClothing((prev) =>
+      prev.some((c) => c.id === clothingItem.id)
+        ? prev.filter((c) => c.id !== clothingItem.id)
+        : [...prev, clothingItem],
+    );
+  };
+
+  const businessContext = {
+    merchant_need: merchantNeed,
+    target_audience: targetAudience,
+  };
+
+  const handleGeneratePrompts = async () => {
+    if (!selectedModel || selectedClothing.length === 0) {
+      message.warning('请先选择模特和服装素材');
+      return;
+    }
+    setGeneratingPrompts(true);
     try {
-      await updateRequirement(requirementId, { selected_style: selectedStyle });
-      const res = await generateLookbook(requirementId);
-      const newTaskId = res.data.task_id;
-      const newTask = {
-        id: newTaskId,
-        status: 'generating',
-        progress: 0,
-        created_at: new Date().toISOString(),
-      };
-      setTasks(prev => [newTask, ...prev]);
+      const res = await generatePrompt({
+        model_id: selectedModel.id,
+        clothing_ids: selectedClothing.map((c) => c.id),
+        reference_id: selectedReference?.id || '',
+        scene_id: selectedScene?.id || '',
+        quantity,
+        size,
+        business_context: businessContext,
+        acceptance_criteria: acceptanceCriteria,
+      });
+      const criteria = res.data?.acceptance_criteria || acceptanceCriteria;
+      const promptList = res.data?.prompts || [];
+      setAcceptanceCriteria(criteria);
+      setPrompts(promptList.map((p: any, i: number) => ({
+        index: i,
+        angle_name: p.angle_name || `图片${i + 1}`,
+        prompt: p.prompt || '',
+      })));
       setCurrentStep(3);
-
-      // 开始轮询
-      pollTaskStatus(newTaskId);
-      message.info('任务已创建，正在后台生成...');
+      message.success('已生成验收标准和提示词');
     } catch (e: any) {
-      message.error('创建任务失败: ' + (e.response?.data?.detail || e.message));
+      message.error('生成提示词失败: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setGeneratingPrompts(false);
     }
   };
 
-  // 删除任务
-  const handleDeleteTask = async (taskId: string) => {
+  const handleStartGeneration = async () => {
+    if (!selectedModel || selectedClothing.length === 0 || prompts.length === 0) {
+      message.warning('请先完成素材选择和提示词生成');
+      return;
+    }
+    setGenerating(true);
+    setTaskStatus('generating');
+    setTaskProgress(8);
+    setCurrentStep(4);
     try {
-      await deleteTask(taskId);
-      setTasks(prev => prev.filter(t => t.id !== taskId));
-      message.success('任务已删除');
-    } catch (e) {
-      message.error('删除任务失败');
+      const res = await generateLookbook({
+        model_id: selectedModel.id,
+        clothing_ids: selectedClothing.map((c) => c.id),
+        reference_id: selectedReference?.id || '',
+        scene_id: selectedScene?.id || '',
+        size,
+        quantity: prompts.length,
+        prompts,
+        acceptance_criteria: acceptanceCriteria,
+        business_context: businessContext,
+      });
+      setGeneratedImages(res.data.images || []);
+      setTaskStatus('completed');
+      setTaskProgress(100);
+      await loadTasks();
+      message.success('Seedream 生图完成，等待验收');
+    } catch (e: any) {
+      setTaskStatus('failed');
+      message.error('生图失败: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setGenerating(false);
     }
   };
 
-  // 查看任务结果
-  const handleViewTaskResult = (task: any) => {
-    if (task.status === 'completed' && task.generated_images) {
-      setImages(task.generated_images);
-      setCurrentStep(4);
+  const handleReview = async (imageId: string, status: 'approved' | 'rejected', feedback = '') => {
+    try {
+      await reviewGeneratedImage(imageId, status, feedback);
+      setGeneratedImages((prev) => prev.map((img) =>
+        img.id === imageId ? { ...img, status, feedback } : img,
+      ));
+      message.success(status === 'approved' ? '已标记合格' : '已记录不合格反馈');
+    } catch (e: any) {
+      message.error('记录验收失败: ' + (e.response?.data?.detail || e.message));
     }
   };
 
-  // 重置
-  const handleReset = () => {
+  const confirmReject = async () => {
+    if (!rejectFeedback.trim()) {
+      message.warning('请填写不合格原因');
+      return;
+    }
+    await handleReview(rejectImageId, 'rejected', rejectFeedback);
+    setRejectModalOpen(false);
+    setRejectImageId('');
+    setRejectFeedback('');
+  };
+
+  const resetAll = () => {
     setCurrentStep(0);
-    setRequirementId(null);
-    setModelImage(null);
-    setClothingImages([]);
-    setFeatures(null);
-    setSelectedStyle('');
-    setImages([]);
-    setDescription('');
+    setSelectedModel(null);
+    setSelectedClothing([]);
+    setSelectedReference(null);
+    setSelectedScene(null);
+    setPrompts([]);
+    setAcceptanceCriteria('');
+    setGeneratedImages([]);
+    setTaskStatus('');
+    setTaskProgress(0);
   };
+
+  const renderImageCard = (
+    item: any,
+    selected: boolean,
+    onClick: () => void,
+    height = 220,
+  ) => (
+    <Card
+      size="small"
+      hoverable
+      onClick={onClick}
+      style={{
+        border: selected ? '2px solid #1677ff' : '1px solid #d9d9d9',
+        borderRadius: 8,
+        cursor: 'pointer',
+      }}
+      cover={
+        <Image
+          src={toContentUrl(item.file_path || item.path || '')}
+          alt={item.name}
+          style={{ height, objectFit: 'cover' }}
+          preview={false}
+        />
+      }
+    >
+      <Card.Meta title={item.name || '未命名素材'} description={selected ? <Tag color="blue">已选择</Tag> : null} />
+    </Card>
+  );
+
+  const renderStep0 = () => {
+    const modelCards = materials.model_cards || [];
+    return (
+      <div>
+        <h3>选择模特</h3>
+        {modelCards.length === 0 ? (
+          <Alert message="暂无模特卡素材，请先在素材管理中扫描或上传" type="info" showIcon />
+        ) : (
+          <Row gutter={[16, 16]}>
+            {modelCards.map((item: any) => (
+              <Col span={6} key={item.id}>
+                {renderImageCard(item, selectedModel?.id === item.id, () => setSelectedModel(item), 240)}
+              </Col>
+            ))}
+          </Row>
+        )}
+        <div style={{ marginTop: 24, textAlign: 'center' }}>
+          <Button type="primary" disabled={!selectedModel} onClick={() => setCurrentStep(1)}>下一步</Button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderStep1 = () => {
+    const clothingSets = materials.clothing_sets || [];
+    return (
+      <div>
+        <h3>选择服装</h3>
+        {conflictWarning && (
+          <Alert
+            message="服装冲突提醒"
+            description={conflictWarning}
+            type="warning"
+            icon={<WarningOutlined />}
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
+        {clothingSets.length === 0 ? (
+          <Alert message="暂无服装素材，请先在素材管理中扫描或上传" type="info" showIcon />
+        ) : (
+          <Collapse
+            defaultActiveKey={clothingSets.map((_: any, index: number) => `set-${index}`)}
+            items={clothingSets.map((set: any, setIndex: number) => ({
+              key: `set-${setIndex}`,
+              label: (
+                <Space>
+                  <SkinOutlined />
+                  <span>{set.name}</span>
+                  <Tag>{set.items?.length || 0}件</Tag>
+                  <Tag color="blue">已选 {selectedClothing.filter((c) => c.outfit_set === set.name).length}</Tag>
+                </Space>
+              ),
+              children: (
+                <Row gutter={[12, 12]}>
+                  {(set.items || []).map((item: any) => {
+                    const selected = selectedClothing.some((c) => c.id === item.id);
+                    return (
+                      <Col span={6} key={item.id}>
+                        {renderImageCard(item, selected, () => toggleClothing(item, set.name), 170)}
+                      </Col>
+                    );
+                  })}
+                </Row>
+              ),
+            }))}
+          />
+        )}
+        <div style={{ marginTop: 24, textAlign: 'center' }}>
+          <Space>
+            <Button onClick={() => setCurrentStep(0)}>上一步</Button>
+            <Button type="primary" disabled={selectedClothing.length === 0} onClick={() => setCurrentStep(2)}>下一步</Button>
+          </Space>
+        </div>
+      </div>
+    );
+  };
+
+  const renderStep2 = () => {
+    const refs = materials.lookbook_refs || [];
+    const scenes = materials.scenes || [];
+    const panelStyle: React.CSSProperties = {
+      border: '1px solid #f0f0f0',
+      borderRadius: 8,
+      padding: 16,
+      minHeight: 220,
+    };
+    return (
+      <div>
+        <h3>选择参考/场景并填写需求</h3>
+        <Row gutter={16} style={{ marginBottom: 16 }}>
+          <Col span={12}>
+            <div style={panelStyle}>
+              <h4 style={{ marginTop: 0 }}><Space><PictureOutlined />Lookbook参考图（可选）</Space></h4>
+              {refs.length === 0 ? <Alert message="暂无参考图" type="info" /> : (
+                <Row gutter={[12, 12]}>
+                  {refs.map((item: any) => (
+                    <Col span={8} key={item.id}>
+                      {renderImageCard(item, selectedReference?.id === item.id, () => setSelectedReference(selectedReference?.id === item.id ? null : item), 150)}
+                    </Col>
+                  ))}
+                </Row>
+              )}
+            </div>
+          </Col>
+          <Col span={12}>
+            <div style={panelStyle}>
+              <h4 style={{ marginTop: 0 }}><Space><EnvironmentOutlined />场景/背景图（可选）</Space></h4>
+              {scenes.length === 0 ? <Alert message="暂无场景图，可直接使用参考图风格" type="info" /> : (
+                <Row gutter={[12, 12]}>
+                  {scenes.map((item: any) => (
+                    <Col span={8} key={item.id}>
+                      {renderImageCard(item, selectedScene?.id === item.id, () => setSelectedScene(selectedScene?.id === item.id ? null : item), 150)}
+                    </Col>
+                  ))}
+                </Row>
+              )}
+            </div>
+          </Col>
+        </Row>
+
+        <div style={panelStyle}>
+          <h4 style={{ marginTop: 0 }}>商家需求与目标用户画像</h4>
+          <Row gutter={16}>
+            <Col span={12}>
+              <TextArea rows={3} value={merchantNeed} onChange={(e) => setMerchantNeed(e.target.value)} placeholder="商家需求" />
+            </Col>
+            <Col span={12}>
+              <TextArea rows={3} value={targetAudience} onChange={(e) => setTargetAudience(e.target.value)} placeholder="目标用户画像" />
+            </Col>
+          </Row>
+          <Divider />
+          <Space>
+            <span>尺寸</span>
+            <Select style={{ width: 160 }} value={size} onChange={setSize} options={sizeOptions} />
+            <span>数量</span>
+            <InputNumber min={1} max={8} value={quantity} onChange={(value) => setQuantity(value || 1)} />
+            <Button icon={<ReloadOutlined />} type="primary" loading={generatingPrompts} onClick={handleGeneratePrompts}>
+              生成验收标准和提示词
+            </Button>
+          </Space>
+        </div>
+
+        <div style={{ marginTop: 24, textAlign: 'center' }}>
+          <Button onClick={() => setCurrentStep(1)}>上一步</Button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderStep3 = () => (
+    <div>
+      <h3>确认验收标准与提示词</h3>
+      <Card size="small" title="验收标准" style={{ marginBottom: 16 }}>
+        <TextArea rows={7} value={acceptanceCriteria} onChange={(e) => setAcceptanceCriteria(e.target.value)} />
+      </Card>
+      <Row gutter={[16, 16]}>
+        {prompts.map((item) => (
+          <Col span={12} key={item.index}>
+            <Card size="small" title={<Space><EditOutlined />{item.angle_name}</Space>}>
+              <TextArea
+                rows={7}
+                value={item.prompt}
+                onChange={(e) => setPrompts((prev) => prev.map((p) => p.index === item.index ? { ...p, prompt: e.target.value } : p))}
+              />
+            </Card>
+          </Col>
+        ))}
+      </Row>
+      <div style={{ marginTop: 24, textAlign: 'center' }}>
+        <Space>
+          <Button onClick={() => setCurrentStep(2)}>上一步</Button>
+          <Button icon={<RocketOutlined />} type="primary" loading={generating} onClick={handleStartGeneration}>点击生图</Button>
+        </Space>
+      </div>
+    </div>
+  );
+
+  const renderStep4 = () => (
+    <div>
+      <h3>生成结果与验收</h3>
+      {taskStatus === 'generating' && (
+        <div style={{ textAlign: 'center', padding: '36px 0' }}>
+          <Spin size="large" />
+          <Progress percent={taskProgress} status="active" style={{ maxWidth: 420, margin: '20px auto' }} />
+        </div>
+      )}
+      {taskStatus === 'failed' && <Alert message="生成失败，请检查火山 Seedream 配置或重试" type="error" showIcon style={{ marginBottom: 16 }} />}
+      {generatedImages.length > 0 && (
+        <>
+          <Alert
+            message="验收标准"
+            description={<pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{acceptanceCriteria}</pre>}
+            type="info"
+            style={{ marginBottom: 16 }}
+          />
+          <Row gutter={[16, 16]}>
+            {generatedImages.map((img, index) => (
+              <Col span={6} key={img.id || index}>
+                <Card
+                  size="small"
+                  cover={<Image src={toContentUrl(img.path || '')} alt={img.angle} style={{ height: 240, objectFit: 'cover' }} />}
+                  actions={[
+                    <Button key="ok" type="link" icon={<CheckCircleOutlined />} onClick={() => handleReview(img.id, 'approved')} disabled={img.status === 'approved'}>
+                      合格
+                    </Button>,
+                    <Button key="bad" type="link" danger icon={<CloseCircleOutlined />} onClick={() => { setRejectImageId(img.id); setRejectModalOpen(true); }}>
+                      不合格
+                    </Button>,
+                  ]}
+                >
+                  <Card.Meta
+                    title={img.angle || `图片${index + 1}`}
+                    description={
+                      <Space direction="vertical" size={4}>
+                        <Tag color={img.status === 'approved' ? 'success' : img.status === 'rejected' ? 'error' : 'warning'}>
+                          {img.status === 'approved' ? '合格' : img.status === 'rejected' ? '不合格' : '待验收'}
+                        </Tag>
+                        {img.feedback && <span style={{ color: '#999' }}>{img.feedback}</span>}
+                      </Space>
+                    }
+                  />
+                </Card>
+              </Col>
+            ))}
+          </Row>
+          <div style={{ marginTop: 24, textAlign: 'center' }}>
+            <Button type="primary" onClick={resetAll}>生成新的Lookbook</Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
 
   const steps = [
-    { title: '上传素材', icon: <CameraOutlined /> },
-    { title: '分析特征', icon: <ThunderboltOutlined /> },
-    { title: '选择风格', icon: <CheckCircleOutlined /> },
-    { title: '生成中', icon: <LoadingOutlined /> },
-    { title: '查看结果', icon: <CheckCircleOutlined /> },
+    { title: '选择模特', icon: <UserOutlined /> },
+    { title: '选择服装', icon: <SkinOutlined /> },
+    { title: '需求与参考', icon: <PictureOutlined /> },
+    { title: '提示词确认', icon: <EditOutlined /> },
+    { title: '结果验收', icon: <RocketOutlined /> },
   ];
-
-  // 获取任务状态标签
-  const getTaskStatusTag = (status: string) => {
-    switch (status) {
-      case 'generating':
-        return <Tag icon={<LoadingOutlined />} color="processing">生成中</Tag>;
-      case 'completed':
-        return <Tag icon={<CheckCircleOutlined />} color="success">已完成</Tag>;
-      case 'failed':
-        return <Tag color="error">失败</Tag>;
-      default:
-        return <Tag>{status}</Tag>;
-    }
-  };
 
   return (
     <div>
       <Steps current={currentStep} items={steps} style={{ marginBottom: 32 }} />
-
-      <Spin spinning={loading} description="处理中...">
-        {/* 步骤0: 上传素材 - 多张服装图 + 一张模特图 */}
-        {currentStep === 0 && (
-          <div style={{ maxWidth: 800, margin: '0 auto' }}>
-            <Row gutter={24}>
-              <Col span={12}>
-                <Card title={<><UserOutlined /> 模特图</>} size="small" extra={<span style={{ fontSize: 12, color: '#999' }}>仅1张</span>}>
-                  {modelImage ? (
-                    <div style={{ textAlign: 'center' }}>
-                      <Image
-                        src={`/assets/uploads/${modelImage.split('/').pop()}`}
-                        alt="模特图"
-                        style={{ maxHeight: 200, borderRadius: 8 }}
-                      />
-                      <p style={{ color: '#52c41a', marginTop: 8 }}>已上传</p>
-                    </div>
-                  ) : (
-                    <Dragger
-                      name="model"
-                      multiple={false}
-                      accept="image/*"
-                      showUploadList={false}
-                      beforeUpload={handleUploadModel}
-                    >
-                      <p className="ant-upload-drag-icon"><UserOutlined style={{ fontSize: 36, color: '#1890ff' }} /></p>
-                      <p className="ant-upload-text">点击或拖拽上传模特照片</p>
-                      <p className="ant-upload-hint">支持 JPG、PNG</p>
-                    </Dragger>
-                  )}
-                </Card>
-              </Col>
-              <Col span={12}>
-                <Card title={<><SkinOutlined /> 服装图</>} size="small" extra={<span style={{ fontSize: 12, color: '#999' }}>支持多张</span>}>
-                  <div style={{ marginBottom: 8, maxHeight: 200, overflow: 'auto' }}>
-                    {clothingImages.length > 0 && (
-                      <Row gutter={[8, 8]}>
-                        {clothingImages.map((img, index) => (
-                          <Col span={8} key={index} style={{ position: 'relative' }}>
-                            <Image
-                              src={`/assets/uploads/${img.split('/').pop()}`}
-                              alt={`服装图${index + 1}`}
-                              style={{ width: '100%', height: 60, objectFit: 'cover', borderRadius: 4 }}
-                            />
-                            <Button
-                              danger
-                              size="small"
-                              icon={<DeleteOutlined />}
-                              onClick={() => handleRemoveClothing(index)}
-                              style={{
-                                position: 'absolute', top: -4, right: -4,
-                                width: 20, height: 20, minWidth: 20,
-                                padding: 0, borderRadius: '50%', fontSize: 10,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              }}
-                            />
-                          </Col>
-                        ))}
-                      </Row>
-                    )}
-                  </div>
-                  <Dragger
-                    name="clothing"
-                    multiple={true}
-                    accept="image/*"
-                    showUploadList={false}
-                    beforeUpload={handleUploadClothing}
-                  >
-                    <p className="ant-upload-drag-icon"><PlusOutlined style={{ fontSize: 28, color: '#1890ff' }} /></p>
-                    <p className="ant-upload-text">点击或拖拽上传服装照片</p>
-                    <p className="ant-upload-hint">支持多张上传，JPG、PNG</p>
-                  </Dragger>
-                </Card>
-              </Col>
-            </Row>
-            <div style={{ marginTop: 16 }}>
-              <TextArea
-                rows={2}
-                placeholder="描述服装特征（可选，如：白色连衣裙，简约风格）"
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-              />
-            </div>
-            <div style={{ marginTop: 16, textAlign: 'center' }}>
-              <Button
-                type="primary"
-                disabled={!modelImage || clothingImages.length === 0}
-                onClick={() => setCurrentStep(1)}
-              >
-                下一步：分析特征
-              </Button>
-              {!modelImage && <p style={{ color: '#999', marginTop: 8 }}>请先上传模特图</p>}
-              {modelImage && clothingImages.length === 0 && <p style={{ color: '#999', marginTop: 8 }}>请上传至少一张服装图</p>}
-            </div>
-          </div>
-        )}
-
-        {/* 步骤1: 分析特征 */}
-        {currentStep === 1 && (
-          <div style={{ maxWidth: 600, margin: '0 auto', textAlign: 'center' }}>
-            <Row gutter={16} style={{ marginBottom: 16 }}>
-              {modelImage && (
-                <Col span={12}>
-                  <Image
-                    src={`/assets/uploads/${modelImage.split('/').pop()}`}
-                    alt="模特图"
-                    style={{ maxHeight: 200, borderRadius: 8 }}
-                  />
-                  <p>模特图</p>
-                </Col>
-              )}
-              {clothingImages.length > 0 && (
-                <Col span={12}>
-                  <div style={{ maxHeight: 200, overflow: 'auto' }}>
-                    {clothingImages.map((img, index) => (
-                      <Image
-                        key={index}
-                        src={`/assets/uploads/${img.split('/').pop()}`}
-                        alt={`服装图${index + 1}`}
-                        style={{ maxHeight: 80, borderRadius: 4, marginRight: 4 }}
-                      />
-                    ))}
-                  </div>
-                  <p>服装图 ({clothingImages.length}张)</p>
-                </Col>
-              )}
-            </Row>
-            <p style={{ marginBottom: 16 }}>AI将分析服装特征并推荐风格</p>
-            <Space>
-              <Button onClick={() => setCurrentStep(0)}>上一步</Button>
-              <Button type="primary" onClick={handleAnalyze} loading={loading}>
-                开始分析
-              </Button>
-            </Space>
-          </div>
-        )}
-
-        {/* 步骤2: 选择风格 */}
-        {currentStep === 2 && (
-          <div>
-            {features && (
-              <Card title="AI识别结果" size="small" style={{ marginBottom: 24 }}>
-                <Descriptions column={3} size="small">
-                  <Descriptions.Item label="服装类型">{features.clothing_type}</Descriptions.Item>
-                  <Descriptions.Item label="颜色">{features.color}</Descriptions.Item>
-                  <Descriptions.Item label="风格">{features.style}</Descriptions.Item>
-                  <Descriptions.Item label="材质">{features.material}</Descriptions.Item>
-                  <Descriptions.Item label="目标人群">{features.target_audience}</Descriptions.Item>
-                  <Descriptions.Item label="卖点">{features.selling_points?.join(', ')}</Descriptions.Item>
-                </Descriptions>
-              </Card>
-            )}
-            <h3>选择Lookbook风格</h3>
-            <Radio.Group
-              onChange={(e) => handleSelectStyle(e.target.value)}
-              value={selectedStyle}
-              style={{ width: '100%' }}
-            >
-              <Row gutter={16}>
-                {styles.map(style => (
-                  <Col span={8} key={style.id}>
-                    <Radio value={style.id} style={{ width: '100%' }}>
-                      <Card
-                        hoverable
-                        size="small"
-                        style={{
-                          border: selectedStyle === style.id ? '2px solid #1890ff' : '1px solid #d9d9d9',
-                          borderRadius: 8,
-                          width: '100%',
-                        }}
-                      >
-                        <Card.Meta
-                          title={style.name}
-                          description={
-                            <div>
-                              <p style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>{style.description}</p>
-                              <div>
-                                {style.angles?.map((a: any, i: number) => (
-                                  <Tag key={i} style={{ fontSize: 11 }}>{a.name}</Tag>
-                                ))}
-                              </div>
-                            </div>
-                          }
-                        />
-                      </Card>
-                    </Radio>
-                  </Col>
-                ))}
-              </Row>
-            </Radio.Group>
-            <div style={{ marginTop: 24, textAlign: 'center' }}>
-              <Space>
-                <Button onClick={() => setCurrentStep(1)}>上一步</Button>
-                <Button
-                  type="primary"
-                  disabled={!selectedStyle}
-                  onClick={handleConfirmAndGenerate}
-                  loading={loading}
-                >
-                  确认风格，开始生成
-                </Button>
-              </Space>
-            </div>
-          </div>
-        )}
-
-        {/* 步骤3: 生成进度 */}
-        {currentStep === 3 && (
-          <div style={{ textAlign: 'center', padding: '40px 0' }}>
-            <Spin size="large" />
-            <h3 style={{ marginTop: 16 }}>正在生成Lookbook...</h3>
-            <p style={{ color: '#999' }}>任务已提交到后台，请稍候。每张图片约需20-30秒。</p>
-            <p style={{ color: '#999' }}>您可以在下方任务列表中查看进度。</p>
-          </div>
-        )}
-
-        {/* 步骤4: 查看结果 */}
-        {currentStep === 4 && images.length > 0 && (
-          <div>
-            <h3>生成结果</h3>
-            <Row gutter={[16, 16]}>
-              {images.map((img, index) => (
-                <Col span={6} key={index}>
-                  <Card size="small" cover={
-                    <Image
-                      src={`/assets/generated/${img.path?.split('/').pop() || img.url}`}
-                      alt={img.angle}
-                      style={{ height: 240, objectFit: 'cover' }}
-                    />
-                  }>
-                    <Card.Meta title={img.angle} description={<Tag color="green">已完成</Tag>} />
-                  </Card>
-                </Col>
-              ))}
-            </Row>
-            <div style={{ marginTop: 24, textAlign: 'center' }}>
-              <Button type="primary" onClick={handleReset}>
-                生成新的Lookbook
-              </Button>
-            </div>
-          </div>
-        )}
+      <Spin spinning={materialsLoading && currentStep < 4} tip="加载素材中...">
+        {currentStep === 0 && renderStep0()}
+        {currentStep === 1 && renderStep1()}
+        {currentStep === 2 && renderStep2()}
+        {currentStep === 3 && renderStep3()}
+        {currentStep === 4 && renderStep4()}
       </Spin>
 
-      {/* 任务列表区域 - 始终显示在底部 */}
       {tasks.length > 0 && (
         <div style={{ marginTop: 32 }}>
           <Divider />
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <h3 style={{ margin: 0 }}>任务列表</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h3 style={{ margin: 0 }}>最近任务</h3>
             <Button size="small" onClick={loadTasks}>刷新</Button>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {tasks.map(task => (
-              <Card key={task.id} size="small" style={{ background: '#fafafa' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <Space>
-                      <span style={{ fontWeight: 500 }}>任务 {task.id?.slice(0, 8)}...</span>
-                      {getTaskStatusTag(task.status)}
-                    </Space>
-                    {task.progress !== undefined && task.status === 'generating' && (
-                      <Progress percent={task.progress} size="small" style={{ width: 200, marginTop: 4 }} />
-                    )}
-                    <div style={{ fontSize: 12, color: '#999', marginTop: 2 }}>
-                      {task.created_at && new Date(task.created_at).toLocaleString()}
-                    </div>
-                  </div>
-                  <Space>
-                    {task.status === 'completed' && (
-                      <Button size="small" type="link" onClick={() => handleViewTaskResult(task)}>查看结果</Button>
-                    )}
-                    <Popconfirm title="确定删除该任务?" onConfirm={() => handleDeleteTask(task.id)}>
-                      <Button danger size="small" icon={<DeleteOutlined />}>删除</Button>
-                    </Popconfirm>
-                  </Space>
-                </div>
+          <Space direction="vertical" style={{ width: '100%' }}>
+            {tasks.slice(0, 6).map((task) => (
+              <Card size="small" key={task.id}>
+                <Space>
+                  <span>任务 {task.id?.slice(0, 8)}</span>
+                  <Tag color={task.status === 'completed' ? 'success' : task.status === 'failed' ? 'error' : 'processing'}>{task.status}</Tag>
+                  <span>{task.size}</span>
+                  <span>{task.quantity || task.generated_images?.length || 0}张</span>
+                </Space>
               </Card>
             ))}
-          </div>
+          </Space>
         </div>
       )}
+
+      <Modal
+        title="不合格反馈"
+        open={rejectModalOpen}
+        onOk={confirmReject}
+        onCancel={() => setRejectModalOpen(false)}
+        okText="提交反馈"
+        cancelText="取消"
+      >
+        <TextArea
+          rows={4}
+          value={rejectFeedback}
+          onChange={(e) => setRejectFeedback(e.target.value)}
+          placeholder="例如：服装颜色偏差、模特手部异常、背景不符合参考图、构图裁切等"
+        />
+      </Modal>
     </div>
   );
 };

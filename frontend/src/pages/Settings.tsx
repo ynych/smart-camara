@@ -84,7 +84,7 @@ const Settings: React.FC = () => {
       <Card title="使用说明" size="small">
         <p>当前使用火山引擎 Seedream 模型生成图片。</p>
         <p>免费额度：50张（请合理使用）</p>
-        <p>图片尺寸：2048x2048</p>
+        <p>输出尺寸：工作台可选 1:1、3:4、9:16（映射为 Seedream 推荐像素）</p>
       </Card>
     </div>
   );

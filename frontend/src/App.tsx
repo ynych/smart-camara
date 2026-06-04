@@ -12,8 +12,8 @@ const { Header, Sider, Content } = Layout;
 const { Title } = Typography;
 
 const menuItems = [
-  { key: '/studio', icon: <CameraOutlined />, label: '拍摄工作台' },
   { key: '/materials', icon: <FolderOutlined />, label: '素材管理' },
+  { key: '/studio', icon: <CameraOutlined />, label: '生图工作台' },
   { key: '/gallery', icon: <PictureOutlined />, label: '我的相册' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ];

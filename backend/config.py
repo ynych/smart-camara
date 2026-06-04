@@ -18,6 +18,9 @@ ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 UPLOADS_DIR = os.path.join(ASSETS_DIR, "uploads")
 GENERATED_DIR = os.path.join(ASSETS_DIR, "generated")
 
+# 内容素材目录
+CONTENT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "content")
+
 for d in [ASSETS_DIR, UPLOADS_DIR, GENERATED_DIR]:
     os.makedirs(d, exist_ok=True)
 

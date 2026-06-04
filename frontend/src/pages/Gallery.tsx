@@ -1,24 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Row, Col, Empty, Image, Tag, Button, message } from 'antd';
 import { getGallery } from '../services/api';
+import { toContentUrl } from '../utils/contentUrl';
 
 const Gallery: React.FC = () => {
   const [gallery, setGallery] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     loadGallery();
   }, []);
 
   const loadGallery = async () => {
-    setLoading(true);
     try {
       const res = await getGallery();
       setGallery(res.data.gallery || []);
     } catch (e) {
       message.error('加载相册失败');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -37,7 +34,7 @@ const Gallery: React.FC = () => {
               {item.images?.map((img: any, idx: number) => (
                 <Col span={6} key={idx}>
                   <Image
-                    src={`/assets/generated/${item.task_id}/${img.path.split('/').pop()}`}
+                    src={toContentUrl(img.path || '')}
                     alt={img.angle}
                     style={{ height: 200, objectFit: 'cover', borderRadius: 8 }}
                   />

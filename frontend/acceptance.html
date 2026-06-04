@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>私人摄影团队 MVP 验收台</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1f2937; background: #f6f8fb; }
+    header { height: 56px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; background: #fff; border-bottom: 1px solid #e5e7eb; }
+    main { padding: 20px 24px 40px; max-width: 1440px; margin: 0 auto; }
+    h1 { font-size: 18px; margin: 0; }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    h3 { font-size: 14px; margin: 12px 0 8px; }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+    .panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; }
+    .span-4 { grid-column: span 4; }
+    .span-6 { grid-column: span 6; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+    .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    button { border: 1px solid #d1d5db; background: #fff; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+    button.primary { background: #1677ff; border-color: #1677ff; color: #fff; }
+    button.danger { color: #cf1322; border-color: #ffa39e; }
+    button.good { color: #237804; border-color: #b7eb8f; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    select, input, textarea { width: 100%; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; font: inherit; background: #fff; }
+    textarea { min-height: 96px; resize: vertical; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; max-height: 420px; overflow: auto; padding-right: 4px; }
+    .card { border: 2px solid #e5e7eb; border-radius: 8px; overflow: hidden; background: #fff; cursor: pointer; }
+    .card.selected { border-color: #1677ff; }
+    .card img { width: 100%; height: 150px; object-fit: cover; display: block; background: #f3f4f6; }
+    .card .name { padding: 8px; font-size: 12px; line-height: 1.3; height: 48px; overflow: hidden; }
+    .muted { color: #6b7280; font-size: 12px; }
+    .status { padding: 10px 12px; border-radius: 6px; background: #eef2ff; color: #1d4ed8; margin: 12px 0; white-space: pre-wrap; }
+    .error { background: #fff1f0; color: #a8071a; }
+    .ok { background: #f6ffed; color: #237804; }
+    .prompt-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .result-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+    .result-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+    .result-card img { width: 100%; height: 280px; object-fit: cover; background: #f3f4f6; display: block; }
+    .result-card .body { padding: 12px; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: #fff7e6; color: #ad6800; }
+    .pill.approved { background: #f6ffed; color: #237804; }
+    .pill.rejected { background: #fff1f0; color: #a8071a; }
+    @media (max-width: 900px) { .span-4, .span-6, .span-8 { grid-column: span 12; } .prompt-list { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>私人摄影团队 MVP 验收台</h1>
+    <div class="toolbar">
+      <span class="muted">API: http://127.0.0.1:8155</span>
+      <button onclick="loadMaterials()">刷新素材</button>
+    </div>
+  </header>
+  <main>
+    <div id="status" class="status">正在加载素材...</div>
+
+    <section class="grid">
+      <div class="panel span-4">
+        <h2>1. 模特素材</h2>
+        <div id="models" class="cards"></div>
+      </div>
+      <div class="panel span-4">
+        <h2>2. 服装素材</h2>
+        <select id="clothingSet" onchange="renderClothing()"></select>
+        <h3>选择图片</h3>
+        <div id="clothing" class="cards"></div>
+      </div>
+      <div class="panel span-4">
+        <h2>3. Lookbook 参考</h2>
+        <div id="refs" class="cards"></div>
+      </div>
+
+      <div class="panel span-6">
+        <h2>4. 商家需求和目标用户</h2>
+        <h3>商家需求</h3>
+        <textarea id="merchantNeed">电商Lookbook效果图，用于商品详情页和投放素材</textarea>
+        <h3>目标用户画像</h3>
+        <textarea id="targetAudience">关注质感、通勤和日常穿搭的女性用户</textarea>
+      </div>
+      <div class="panel span-6">
+        <h2>5. 尺寸、数量和提示词</h2>
+        <div class="toolbar">
+          <label>尺寸 <select id="size" style="width: 140px"><option>3:4</option><option>1:1</option><option>9:16</option></select></label>
+          <label>数量 <input id="quantity" type="number" min="1" max="8" value="2" style="width: 90px" /></label>
+          <button class="primary" onclick="generatePrompts()">生成验收标准和提示词</button>
+        </div>
+        <h3>验收标准</h3>
+        <textarea id="criteria"></textarea>
+      </div>
+
+      <div class="panel span-12">
+        <h2>6. 提示词确认</h2>
+        <div id="prompts" class="prompt-list"></div>
+        <div style="margin-top: 14px">
+          <button class="primary" id="generateBtn" onclick="generateImages()" disabled>点击生图</button>
+          <span class="muted">使用已配置的火山 Seedream 5.x；前面的素材/提示词/验收标准可先独立验收。</span>
+        </div>
+      </div>
+
+      <div class="panel span-12">
+        <h2>7. 图片结果与合格标记</h2>
+        <div id="results" class="result-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const API = 'http://127.0.0.1:8155';
+    const state = { grouped: {}, modelId: '', clothingIds: new Set(), refId: '', prompts: [], images: [] };
+
+    function setStatus(text, cls = '') {
+      const el = document.getElementById('status');
+      el.className = `status ${cls}`;
+      el.textContent = text;
+    }
+
+    function toUrl(path) {
+      if (!path) return '';
+      if (path.startsWith('http') || path.startsWith('data:')) return path;
+      const contentIndex = path.indexOf('/content/');
+      if (contentIndex >= 0) return API + '/' + path.slice(contentIndex + 1).split('/').map(encodeURIComponent).join('/');
+      const assetsIndex = path.indexOf('/assets/');
+      if (assetsIndex >= 0) return API + '/' + path.slice(assetsIndex + 1).split('/').map(encodeURIComponent).join('/');
+      return path;
+    }
+
+    function card(item, selected, onClick) {
+      const div = document.createElement('div');
+      div.className = selected ? 'card selected' : 'card';
+      div.onclick = onClick;
+      div.innerHTML = `<img src="${toUrl(item.file_path)}" alt=""><div class="name">${item.name || '未命名'}</div>`;
+      return div;
+    }
+
+    async function loadMaterials() {
+      try {
+        setStatus('正在扫描并加载素材...');
+        await fetch(API + '/api/materials/scan');
+        const res = await fetch(API + '/api/materials/grouped');
+        state.grouped = await res.json();
+        renderAll();
+        setStatus(`素材已加载：模特 ${state.grouped.model_cards.length}，服装组 ${state.grouped.clothing_sets.length}，参考图 ${state.grouped.lookbook_refs.length}`, 'ok');
+      } catch (err) {
+        setStatus('加载素材失败：' + err.message, 'error');
+      }
+    }
+
+    function renderAll() {
+      renderModels();
+      renderClothingSets();
+      renderRefs();
+    }
+
+    function renderModels() {
+      const box = document.getElementById('models');
+      box.innerHTML = '';
+      (state.grouped.model_cards || []).forEach(item => box.appendChild(card(item, state.modelId === item.id, () => {
+        state.modelId = item.id;
+        renderModels();
+      })));
+    }
+
+    function renderClothingSets() {
+      const select = document.getElementById('clothingSet');
+      select.innerHTML = '';
+      (state.grouped.clothing_sets || []).forEach((set, index) => {
+        const option = document.createElement('option');
+        option.value = index;
+        option.textContent = `${set.name} (${set.items.length})`;
+        select.appendChild(option);
+      });
+      renderClothing();
+    }
+
+    function renderClothing() {
+      const box = document.getElementById('clothing');
+      const setIndex = Number(document.getElementById('clothingSet').value || 0);
+      const set = (state.grouped.clothing_sets || [])[setIndex];
+      box.innerHTML = '';
+      if (!set) return;
+      set.items.forEach(item => box.appendChild(card(item, state.clothingIds.has(item.id), () => {
+        state.clothingIds.has(item.id) ? state.clothingIds.delete(item.id) : state.clothingIds.add(item.id);
+        renderClothing();
+      })));
+    }
+
+    function renderRefs() {
+      const box = document.getElementById('refs');
+      box.innerHTML = '';
+      (state.grouped.lookbook_refs || []).forEach(item => box.appendChild(card(item, state.refId === item.id, () => {
+        state.refId = state.refId === item.id ? '' : item.id;
+        renderRefs();
+      })));
+    }
+
+    async function generatePrompts() {
+      if (!state.modelId || state.clothingIds.size === 0) {
+        setStatus('请先选择模特和至少一张服装素材', 'error');
+        return;
+      }
+      const payload = {
+        model_id: state.modelId,
+        clothing_ids: Array.from(state.clothingIds),
+        reference_id: state.refId,
+        quantity: Number(document.getElementById('quantity').value || 1),
+        size: document.getElementById('size').value,
+        business_context: {
+          merchant_need: document.getElementById('merchantNeed').value,
+          target_audience: document.getElementById('targetAudience').value,
+        },
+        acceptance_criteria: document.getElementById('criteria').value,
+      };
+      const res = await fetch(API + '/api/lookbook/generate-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(data.detail || '生成提示词失败', 'error');
+        return;
+      }
+      state.prompts = data.prompts || [];
+      document.getElementById('criteria').value = data.acceptance_criteria || '';
+      renderPrompts();
+      document.getElementById('generateBtn').disabled = false;
+      setStatus('验收标准和提示词已生成，可以编辑后点击生图。', 'ok');
+    }
+
+    function renderPrompts() {
+      const box = document.getElementById('prompts');
+      box.innerHTML = '';
+      state.prompts.forEach((p, index) => {
+        const div = document.createElement('div');
+        div.innerHTML = `<h3>${p.angle_name || '图片 ' + (index + 1)}</h3><textarea data-index="${index}">${p.prompt || ''}</textarea>`;
+        box.appendChild(div);
+      });
+    }
+
+    async function generateImages() {
+      document.querySelectorAll('#prompts textarea').forEach((el) => {
+        const index = Number(el.dataset.index);
+        state.prompts[index].prompt = el.value;
+      });
+      setStatus('正在调用 Seedream 5.x 生图...');
+      const payload = {
+        model_id: state.modelId,
+        clothing_ids: Array.from(state.clothingIds),
+        reference_id: state.refId,
+        size: document.getElementById('size').value,
+        quantity: state.prompts.length,
+        prompts: state.prompts,
+        acceptance_criteria: document.getElementById('criteria').value,
+        business_context: {
+          merchant_need: document.getElementById('merchantNeed').value,
+          target_audience: document.getElementById('targetAudience').value,
+        },
+      };
+      const res = await fetch(API + '/api/lookbook/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(data.detail || '生图失败。请检查火山 Seedream 配置或稍后重试。', 'error');
+        return;
+      }
+      state.images = data.images || [];
+      renderResults();
+      setStatus('生图完成，请逐张标记合格或不合格。', 'ok');
+    }
+
+    async function reviewImage(id, status) {
+      let feedback = '';
+      if (status === 'rejected') {
+        feedback = prompt('请输入不合格原因，例如：服装颜色偏差、手部异常、背景不符合参考') || '';
+        if (!feedback.trim()) return;
+      }
+      const res = await fetch(`${API}/api/lookbook/images/${id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, feedback }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(data.detail || '反馈记录失败', 'error');
+        return;
+      }
+      state.images = state.images.map(img => img.id === id ? { ...img, status, feedback } : img);
+      renderResults();
+      setStatus(status === 'approved' ? '已标记合格' : '已记录不合格反馈，后续提示词会吸收该反馈。', 'ok');
+    }
+
+    function renderResults() {
+      const box = document.getElementById('results');
+      box.innerHTML = '';
+      state.images.forEach(img => {
+        const div = document.createElement('div');
+        div.className = 'result-card';
+        div.innerHTML = `
+          <img src="${toUrl(img.path)}" alt="">
+          <div class="body">
+            <h3>${img.angle || '生成图片'}</h3>
+            <p><span class="pill ${img.status || ''}">${img.status || 'pending'}</span></p>
+            ${img.feedback ? `<p class="muted">${img.feedback}</p>` : ''}
+            <div class="toolbar">
+              <button class="good">合格</button>
+              <button class="danger">不合格</button>
+            </div>
+          </div>
+        `;
+        div.querySelector('.good').onclick = () => reviewImage(img.id, 'approved');
+        div.querySelector('.danger').onclick = () => reviewImage(img.id, 'rejected');
+        box.appendChild(div);
+      });
+    }
+
+    loadMaterials();
+  </script>
+</body>
+</html>

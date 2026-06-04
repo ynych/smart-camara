@@ -42,3 +42,25 @@ class MaterialTool:
             }
         finally:
             db.close()
+
+    @staticmethod
+    def get_by_ids(ids: list) -> list:
+        """批量获取素材"""
+        if not ids:
+            return []
+        db = SessionLocal()
+        try:
+            materials = db.query(Material).filter(Material.id.in_(ids)).all()
+            return [
+                {
+                    "id": m.id,
+                    "name": m.name,
+                    "type": m.type,
+                    "category": m.category,
+                    "file_path": m.file_path,
+                    "metadata": json.loads(m.metadata_json) if m.metadata_json else {},
+                }
+                for m in materials
+            ]
+        finally:
+            db.close()

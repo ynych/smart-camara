@@ -12,6 +12,8 @@ class Requirement(Base):
     selected_style = Column(String(36))
     user_edits = Column(Text)  # JSON string
     selected_materials = Column(Text)  # JSON: [{"id": "xxx", "category": "model"}, ...]
+    reference_image_path = Column(String(500))
+    prompt_overrides = Column(Text)  # JSON string
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -33,6 +35,10 @@ class LookbookTask(Base):
     style_id = Column(String(36))
     status = Column(String(20), default="pending")  # pending/analyzing/generating/completed/failed
     progress = Column(Integer, default=0)
+    quantity = Column(Integer, default=4)
+    size = Column(String(20), default="3:4")
+    selected_materials = Column(Text)  # JSON string
+    acceptance_criteria = Column(Text)
     prompt_overrides = Column(Text)  # JSON string
     generated_images = Column(Text)  # JSON string
     error_message = Column(Text)
@@ -48,6 +54,32 @@ class Material(Base):
     file_path = Column(String(500))
     thumbnail_path = Column(String(500))
     metadata_json = Column(Text)  # JSON string (避免与SQLAlchemy metadata冲突)
+    parent_dir = Column(String(255))
+    sub_category = Column(String(50))
+    outfit_set = Column(String(255))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class GeneratedImage(Base):
+    __tablename__ = "generated_images"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String(36))
+    file_path = Column(String(500))
+    angle = Column(String(100))
+    prompt = Column(Text)
+    status = Column(String(20), default="pending")  # pending/approved/rejected
+    feedback = Column(Text)
+    acceptance_criteria = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    reviewed_at = Column(DateTime)
+
+class PromptFeedback(Base):
+    __tablename__ = "prompt_feedbacks"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = Column(String(36))
+    image_id = Column(String(36))
+    prompt_used = Column(Text)
+    result = Column(String(20))
+    feedback = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class ApiConfig(Base):
