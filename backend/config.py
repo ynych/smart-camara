@@ -17,12 +17,39 @@ DEFAULT_VOLCANO_CONFIG = {
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
 UPLOADS_DIR = os.path.join(ASSETS_DIR, "uploads")
 GENERATED_DIR = os.path.join(ASSETS_DIR, "generated")
+THUMBS_DIR = os.path.join(ASSETS_DIR, "thumbs")
 
 # 内容素材目录
 CONTENT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "content")
 
-for d in [ASSETS_DIR, UPLOADS_DIR, GENERATED_DIR]:
+for d in [ASSETS_DIR, UPLOADS_DIR, GENERATED_DIR, THUMBS_DIR]:
     os.makedirs(d, exist_ok=True)
+
+def get_chat_api_config():
+    """文本大模型（提示词生成等）配置，优先 VOLCANO_CHAT_ENDPOINT。"""
+    chat_endpoint = os.environ.get("VOLCANO_CHAT_ENDPOINT") or os.environ.get("VOLCANO_LLM_ENDPOINT", "")
+    chat_key = os.environ.get("VOLCANO_CHAT_API_KEY") or os.environ.get("VOLCANO_API_KEY", "")
+    if chat_endpoint and chat_key:
+        return {
+            "provider": "volcano",
+            "api_key": chat_key,
+            "endpoint": chat_endpoint,
+            "model": os.environ.get("VOLCANO_CHAT_MODEL", "doubao"),
+        }
+    db = SessionLocal()
+    try:
+        config = db.query(ApiConfig).filter(ApiConfig.provider == "volcano_chat").first()
+        if config and config.endpoint and config.api_key:
+            return {
+                "provider": config.provider,
+                "api_key": config.api_key,
+                "endpoint": config.endpoint,
+                "model": config.model,
+            }
+    finally:
+        db.close()
+    return {"provider": "volcano", "api_key": "", "endpoint": "", "model": ""}
+
 
 def get_image_api_config():
     """获取当前激活的生图API配置"""

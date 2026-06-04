@@ -14,7 +14,9 @@
 
 ```bash
 cp .env.example .env
-# 编辑 .env，填入 VOLCANO_API_KEY 与 VOLCANO_ENDPOINT
+# 编辑 .env：
+# - VOLCANO_API_KEY / VOLCANO_ENDPOINT：Seedream 生图
+# - VOLCANO_CHAT_ENDPOINT：豆包等对话模型（提示词生成，与生在图 endpoint 不同）
 ```
 
 ### 3. 准备素材

@@ -13,6 +13,43 @@ from config import UPLOADS_DIR, ASSETS_DIR
 router = APIRouter(prefix="/api/lookbook", tags=["Lookbook"])
 skill = LookbookSkill()
 
+
+def _resolve_source_materials(task: LookbookTask, req: Requirement | None) -> dict:
+    """解析任务关联的模特、服装、参考图、场景素材。"""
+    raw = task.selected_materials if task else None
+    if not raw and req and req.selected_materials:
+        raw = req.selected_materials
+    if not raw:
+        return {"model": None, "clothing": [], "reference": None, "scene": None}
+
+    try:
+        selected = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {"model": None, "clothing": [], "reference": None, "scene": None}
+
+    model_id = selected.get("model_id")
+    clothing_ids = selected.get("clothing_ids") or []
+    reference_id = selected.get("reference_id")
+    scene_id = selected.get("scene_id")
+
+    id_list = []
+    if model_id:
+        id_list.append(model_id)
+    id_list.extend(clothing_ids)
+    if reference_id:
+        id_list.append(reference_id)
+    if scene_id and scene_id not in id_list:
+        id_list.append(scene_id)
+
+    materials = {m["id"]: m for m in MaterialTool.get_by_ids(id_list)}
+    return {
+        "model": materials.get(model_id),
+        "clothing": [materials[cid] for cid in clothing_ids if cid in materials],
+        "reference": materials.get(reference_id) if reference_id else None,
+        "scene": materials.get(scene_id) if scene_id else None,
+        "business_context": selected.get("business_context"),
+    }
+
 @router.post("/upload")
 def upload_source_image(
     files: list[UploadFile] = File(..., description="上传图片文件（支持多个）"),
@@ -138,8 +175,8 @@ def get_styles(db: Session = Depends(get_db)):
     }
 
 @router.post("/generate-prompt")
-def generate_prompt(data: dict):
-    """预生成prompt列表（不执行生图）"""
+async def generate_prompt(data: dict):
+    """预生成 prompt 列表（优先大模型，失败回退模板）。"""
     model_id = data.get("model_id")
     clothing_ids = data.get("clothing_ids", [])
     reference_id = data.get("reference_id")
@@ -155,7 +192,7 @@ def generate_prompt(data: dict):
             quantity=quantity,
             business_context=business_context,
         )
-        prompts = skill.build_prompts(
+        prompts, prompt_source = await skill.build_prompts_async(
             model_id,
             clothing_ids,
             reference_id,
@@ -165,7 +202,11 @@ def generate_prompt(data: dict):
             business_context=business_context,
             acceptance_criteria=criteria,
         )
-        return {"prompts": prompts, "acceptance_criteria": criteria}
+        return {
+            "prompts": prompts,
+            "acceptance_criteria": criteria,
+            "prompt_source": prompt_source,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -250,6 +291,9 @@ def get_gallery(db: Session = Depends(get_db)):
             "style_id": task.style_id,
             "images": images,
             "source_image": req.source_image_path if req else None,
+            "size": task.size,
+            "acceptance_criteria": task.acceptance_criteria,
+            "source_materials": _resolve_source_materials(task, req),
             "created_at": task.created_at.isoformat() if task.created_at else None,
         })
     return {"gallery": results}

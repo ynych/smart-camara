@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -16,6 +16,7 @@ import {
   Space,
   Spin,
   Steps,
+  Tabs,
   Tag,
   message,
 } from 'antd';
@@ -24,6 +25,7 @@ import {
   CloseCircleOutlined,
   EditOutlined,
   EnvironmentOutlined,
+  EyeOutlined,
   PictureOutlined,
   ReloadOutlined,
   RocketOutlined,
@@ -40,6 +42,13 @@ import {
   reviewGeneratedImage,
 } from '../services/api';
 import { toContentUrl } from '../utils/contentUrl';
+import { toMediaUrl } from '../utils/mediaUrl';
+
+const STEP_SECTIONS: Record<number, string> = {
+  0: 'model',
+  1: 'clothing',
+  2: 'refs,scenes',
+};
 
 const { TextArea } = Input;
 
@@ -91,18 +100,32 @@ const LookbookStudio: React.FC = () => {
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectImageId, setRejectImageId] = useState('');
   const [rejectFeedback, setRejectFeedback] = useState('');
+  const [previewItem, setPreviewItem] = useState<any>(null);
+  const loadedSectionsRef = useRef<Set<string>>(new Set());
 
-  const loadMaterials = useCallback(async () => {
+  const fetchSection = useCallback(async (step: number, force = false) => {
+    const sections = STEP_SECTIONS[step];
+    if (!sections) return;
+    if (!force && loadedSectionsRef.current.has(sections)) return;
+
     setMaterialsLoading(true);
     try {
-      const res = await getGroupedMaterials();
-      setMaterials(res.data || {});
+      const res = await getGroupedMaterials({ sections });
+      setMaterials((prev: Record<string, unknown>) => ({ ...prev, ...res.data }));
+      loadedSectionsRef.current.add(sections);
     } catch {
       message.error('加载素材失败');
     } finally {
       setMaterialsLoading(false);
     }
   }, []);
+
+  const goToStep = async (step: number) => {
+    if (step >= 0 && step <= 2) {
+      await fetchSection(step, true);
+    }
+    setCurrentStep(step);
+  };
 
   const loadTasks = useCallback(async () => {
     try {
@@ -114,9 +137,14 @@ const LookbookStudio: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    loadMaterials();
     loadTasks();
-  }, [loadMaterials, loadTasks]);
+  }, [loadTasks]);
+
+  useEffect(() => {
+    if (currentStep <= 2) {
+      fetchSection(currentStep);
+    }
+  }, [currentStep, fetchSection]);
 
   useEffect(() => {
     if (selectedClothing.length < 2) {
@@ -140,7 +168,7 @@ const LookbookStudio: React.FC = () => {
       outfit_set: outfitSetName,
       file_path: item.file_path,
       name: item.name,
-      sub_type: item.sub_type || item.sub_category,
+      sub_type: item.shoot_type || item.sub_type || item.sub_category,
     };
     setSelectedClothing((prev) =>
       prev.some((c) => c.id === clothingItem.id)
@@ -180,7 +208,12 @@ const LookbookStudio: React.FC = () => {
         prompt: p.prompt || '',
       })));
       setCurrentStep(3);
-      message.success('已生成验收标准和提示词');
+      const src = res.data?.prompt_source;
+      if (src === 'llm') {
+        message.success('已由大模型生成验收标准与提示词');
+      } else {
+        message.warning('未配置对话模型或调用失败，已使用模板生成提示词（请在 .env 设置 VOLCANO_CHAT_ENDPOINT）');
+      }
     } catch (e: any) {
       message.error('生成提示词失败: ' + (e.response?.data?.detail || e.message));
     } finally {
@@ -256,33 +289,53 @@ const LookbookStudio: React.FC = () => {
     setGeneratedImages([]);
     setTaskStatus('');
     setTaskProgress(0);
+    loadedSectionsRef.current.clear();
   };
 
   const renderImageCard = (
     item: any,
     selected: boolean,
-    onClick: () => void,
+    onSelect: () => void,
     height = 220,
   ) => (
     <Card
       size="small"
       hoverable
-      onClick={onClick}
+      onClick={onSelect}
       style={{
         border: selected ? '2px solid #1677ff' : '1px solid #d9d9d9',
         borderRadius: 8,
         cursor: 'pointer',
       }}
       cover={
-        <Image
-          src={toContentUrl(item.file_path || item.path || '')}
-          alt={item.name}
-          style={{ height, objectFit: 'cover' }}
-          preview={false}
-        />
+        <div style={{ position: 'relative', height, overflow: 'hidden' }}>
+          <img
+            src={toMediaUrl(item)}
+            alt={item.name}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }}
+            loading="lazy"
+          />
+        </div>
       }
+      actions={[
+        <Button
+          key="preview"
+          type="link"
+          size="small"
+          icon={<EyeOutlined />}
+          onClick={(e) => {
+            e.stopPropagation();
+            setPreviewItem(item);
+          }}
+        >
+          查看大图
+        </Button>,
+      ]}
     >
-      <Card.Meta title={item.name || '未命名素材'} description={selected ? <Tag color="blue">已选择</Tag> : null} />
+      <Card.Meta
+        title={item.name || '未命名素材'}
+        description={selected ? <Tag color="blue">已选择</Tag> : <Tag>点击卡片选中</Tag>}
+      />
     </Card>
   );
 
@@ -292,18 +345,23 @@ const LookbookStudio: React.FC = () => {
       <div>
         <h3>选择模特</h3>
         {modelCards.length === 0 ? (
-          <Alert message="暂无模特卡素材，请先在素材管理中扫描或上传" type="info" showIcon />
+          <Alert message="暂无模特卡素材，请先在素材管理中上传" type="info" showIcon />
         ) : (
           <Row gutter={[16, 16]}>
-            {modelCards.map((item: any) => (
-              <Col span={6} key={item.id}>
-                {renderImageCard(item, selectedModel?.id === item.id, () => setSelectedModel(item), 240)}
+            {modelCards.map((item: any, index: number) => (
+              <Col span={6} key={item.id || `model-${index}`}>
+                {renderImageCard(
+                  item,
+                  selectedModel?.id === item.id,
+                  () => setSelectedModel(selectedModel?.id === item.id ? null : item),
+                  240,
+                )}
               </Col>
             ))}
           </Row>
         )}
         <div style={{ marginTop: 24, textAlign: 'center' }}>
-          <Button type="primary" disabled={!selectedModel} onClick={() => setCurrentStep(1)}>下一步</Button>
+          <Button type="primary" disabled={!selectedModel} onClick={() => goToStep(1)}>下一步</Button>
         </div>
       </div>
     );
@@ -325,10 +383,10 @@ const LookbookStudio: React.FC = () => {
           />
         )}
         {clothingSets.length === 0 ? (
-          <Alert message="暂无服装素材，请先在素材管理中扫描或上传" type="info" showIcon />
+          <Alert message="暂无服装素材，请先在素材管理中上传" type="info" showIcon />
         ) : (
           <Collapse
-            defaultActiveKey={clothingSets.map((_: any, index: number) => `set-${index}`)}
+            defaultActiveKey={[]}
             items={clothingSets.map((set: any, setIndex: number) => ({
               key: `set-${setIndex}`,
               label: (
@@ -340,24 +398,39 @@ const LookbookStudio: React.FC = () => {
                 </Space>
               ),
               children: (
-                <Row gutter={[12, 12]}>
-                  {(set.items || []).map((item: any) => {
-                    const selected = selectedClothing.some((c) => c.id === item.id);
-                    return (
-                      <Col span={6} key={item.id}>
-                        {renderImageCard(item, selected, () => toggleClothing(item, set.name), 170)}
-                      </Col>
-                    );
-                  })}
-                </Row>
+                <Tabs
+                  type="card"
+                  size="small"
+                  items={['人台图', '平铺图', '时尚拍摄'].map((typeName) => ({
+                    key: typeName,
+                    label: typeName,
+                    children: (
+                      <Row gutter={[12, 12]}>
+                        {(set.items || [])
+                          .filter((item: any) => {
+                            const st = item.shoot_type || item.sub_type || item.sub_category || '';
+                            return st === typeName || (typeName === '时尚拍摄' && !st);
+                          })
+                          .map((item: any) => {
+                            const selected = selectedClothing.some((c) => c.id === item.id);
+                            return (
+                              <Col span={6} key={item.id}>
+                                {renderImageCard(item, selected, () => toggleClothing(item, set.name), 170)}
+                              </Col>
+                            );
+                          })}
+                      </Row>
+                    ),
+                  }))}
+                />
               ),
             }))}
           />
         )}
         <div style={{ marginTop: 24, textAlign: 'center' }}>
           <Space>
-            <Button onClick={() => setCurrentStep(0)}>上一步</Button>
-            <Button type="primary" disabled={selectedClothing.length === 0} onClick={() => setCurrentStep(2)}>下一步</Button>
+            <Button onClick={() => goToStep(0)}>上一步</Button>
+            <Button type="primary" disabled={selectedClothing.length === 0} onClick={() => goToStep(2)}>下一步</Button>
           </Space>
         </div>
       </div>
@@ -430,7 +503,7 @@ const LookbookStudio: React.FC = () => {
         </div>
 
         <div style={{ marginTop: 24, textAlign: 'center' }}>
-          <Button onClick={() => setCurrentStep(1)}>上一步</Button>
+          <Button onClick={() => goToStep(1)}>上一步</Button>
         </div>
       </div>
     );
@@ -457,7 +530,7 @@ const LookbookStudio: React.FC = () => {
       </Row>
       <div style={{ marginTop: 24, textAlign: 'center' }}>
         <Space>
-          <Button onClick={() => setCurrentStep(2)}>上一步</Button>
+          <Button onClick={() => goToStep(2)}>上一步</Button>
           <Button icon={<RocketOutlined />} type="primary" loading={generating} onClick={handleStartGeneration}>点击生图</Button>
         </Space>
       </div>
@@ -576,6 +649,21 @@ const LookbookStudio: React.FC = () => {
           placeholder="例如：服装颜色偏差、模特手部异常、背景不符合参考图、构图裁切等"
         />
       </Modal>
+
+      {previewItem && (
+        <div style={{ display: 'none' }}>
+          <Image
+            src={toMediaUrl(previewItem, true)}
+            preview={{
+              visible: true,
+              src: toMediaUrl(previewItem, true),
+              onVisibleChange: (visible) => {
+                if (!visible) setPreviewItem(null);
+              },
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 };

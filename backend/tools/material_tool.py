@@ -1,6 +1,8 @@
 import json
+import os
 from database import SessionLocal
 from models import Material
+from services.thumbnail_service import ensure_material_thumbnail
 
 class MaterialTool:
     """素材管理工具"""
@@ -10,19 +12,27 @@ class MaterialTool:
         """创建素材记录"""
         db = SessionLocal()
         try:
+            meta = metadata or {}
             material = Material(
                 name=name,
                 type=type,
                 category=category,
                 file_path=file_path,
-                metadata_json=json.dumps(metadata, ensure_ascii=False) if metadata else None,
+                parent_dir=meta.get("parent_dir"),
+                sub_category=meta.get("sub_category"),
+                outfit_set=meta.get("outfit_set"),
+                metadata_json=json.dumps(meta, ensure_ascii=False) if meta else None,
             )
             db.add(material)
             db.commit()
             db.refresh(material)
-            return material.id
+            material_id = material.id
         finally:
             db.close()
+
+        if file_path and os.path.isfile(file_path):
+            ensure_material_thumbnail(material_id, file_path)
+        return material_id
 
     @staticmethod
     def get(material_id: str) -> dict:
@@ -32,14 +42,7 @@ class MaterialTool:
             material = db.query(Material).filter(Material.id == material_id).first()
             if not material:
                 return None
-            return {
-                "id": material.id,
-                "name": material.name,
-                "type": material.type,
-                "category": material.category,
-                "file_path": material.file_path,
-                "metadata": json.loads(material.metadata_json) if material.metadata_json else {},
-            }
+            return MaterialTool._to_dict(material)
         finally:
             db.close()
 
@@ -51,16 +54,24 @@ class MaterialTool:
         db = SessionLocal()
         try:
             materials = db.query(Material).filter(Material.id.in_(ids)).all()
-            return [
-                {
-                    "id": m.id,
-                    "name": m.name,
-                    "type": m.type,
-                    "category": m.category,
-                    "file_path": m.file_path,
-                    "metadata": json.loads(m.metadata_json) if m.metadata_json else {},
-                }
-                for m in materials
-            ]
+            return [MaterialTool._to_dict(m) for m in materials]
         finally:
             db.close()
+
+    @staticmethod
+    def _to_dict(material: Material) -> dict:
+        meta = json.loads(material.metadata_json) if material.metadata_json else {}
+        return {
+            "id": material.id,
+            "name": material.name,
+            "type": material.type,
+            "category": material.category,
+            "file_path": material.file_path,
+            "thumbnail_path": material.thumbnail_path,
+            "parent_dir": material.parent_dir or meta.get("parent_dir"),
+            "sub_category": material.sub_category or meta.get("sub_category"),
+            "outfit_set": material.outfit_set or meta.get("outfit_set"),
+            "sub_category": material.sub_category or meta.get("sub_category"),
+            "shoot_type": material.sub_category or meta.get("sub_category"),
+            "metadata": meta,
+        }

@@ -20,7 +20,18 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     migrate_db()
     init_default_data()
+    _backfill_materials()
     yield
+
+def _backfill_materials():
+    from database import SessionLocal
+    from services.material_sync import backfill_material_columns
+    db = SessionLocal()
+    try:
+        backfill_material_columns(db)
+    finally:
+        db.close()
+
 
 def migrate_db():
     """使用raw sqlite3为已有表添加新列（兼容已有数据库）"""

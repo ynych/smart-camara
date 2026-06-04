@@ -1,14 +1,88 @@
 import os
 import json
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form, Query
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Material
 from tools.file_tool import FileTool
 from tools.material_tool import MaterialTool
+from services.thumbnail_service import rebuild_missing_thumbnails
+from services.material_sync import backfill_material_columns, normalize_shoot_type, SHOOT_TYPES
 from config import UPLOADS_DIR, CONTENT_DIR
 
 router = APIRouter(prefix="/api/materials", tags=["素材管理"])
+
+
+def _material_item(m: Material) -> dict:
+    meta = {}
+    if m.metadata_json:
+        try:
+            meta = json.loads(m.metadata_json)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    outfit_set = m.outfit_set or meta.get("outfit_set") or "未分组"
+    shoot_type = normalize_shoot_type(m.sub_category or meta.get("sub_category"))
+    return {
+        "id": m.id,
+        "name": m.name,
+        "type": m.type,
+        "category": m.category,
+        "file_path": m.file_path,
+        "thumbnail_path": m.thumbnail_path,
+        "parent_dir": m.parent_dir or meta.get("parent_dir"),
+        "outfit_set": outfit_set,
+        "sub_category": shoot_type,
+        "shoot_type": shoot_type,
+        "sub_type": shoot_type,
+        "metadata": meta,
+    }
+
+
+def _build_grouped(materials: list, sections: set | None = None) -> dict:
+    """按分组组织素材；sections 为 None 时返回全部。"""
+    want = sections or {"model", "clothing", "refs", "scenes"}
+    model_cards = []
+    clothing_sets_map = {}
+    lookbook_refs = []
+    scenes = []
+
+    for m in materials:
+        item = _material_item(m)
+        if m.category == "model" and "model" in want:
+            model_cards.append(item)
+        elif m.category == "clothing" and "clothing" in want:
+            outfit_name = item["outfit_set"] or "未分组"
+            sub_cat = normalize_shoot_type(item["shoot_type"])
+            if outfit_name not in clothing_sets_map:
+                clothing_sets_map[outfit_name] = {
+                    "name": outfit_name,
+                    "items": [],
+                    "sub_groups": {"人台图": [], "平铺图": [], "时尚拍摄": []},
+                    "人台图": [],
+                    "平铺图": [],
+                    "时尚拍摄": [],
+                }
+            item["sub_type"] = sub_cat
+            clothing_sets_map[outfit_name]["items"].append(item)
+            clothing_sets_map[outfit_name]["sub_groups"].setdefault(sub_cat, []).append(item)
+            clothing_sets_map[outfit_name].setdefault(sub_cat, []).append(item)
+        elif m.category == "lookbook_ref" and "refs" in want:
+            lookbook_refs.append(item)
+        elif m.category in ("scene", "background") and "scenes" in want:
+            scenes.append(item)
+
+    result = {}
+    if "model" in want:
+        result["model_cards"] = model_cards
+        result["models"] = model_cards
+    if "clothing" in want:
+        result["clothing_sets"] = list(clothing_sets_map.values())
+    if "refs" in want:
+        result["lookbook_refs"] = lookbook_refs
+    if "scenes" in want:
+        result["scenes"] = scenes
+        result["backgrounds"] = scenes
+    return result
 
 
 @router.get("")
@@ -43,26 +117,64 @@ def list_materials(category: str = None, db: Session = Depends(get_db)):
 def upload_material(
     files: list[UploadFile] = File(...),
     category: str = Form("clothing"),
-    name: str = Form(None),
+    outfit_set: str = Form(None),
+    shoot_type: str = Form(None),
     db: Session = Depends(get_db),
 ):
-    """上传素材"""
+    """上传素材到 content/ 目录并写入数据库。"""
     results = []
     if category == "reference":
         category = "lookbook_ref"
     if category == "background":
         category = "scene"
+    if category == "clothing" and not outfit_set:
+        raise HTTPException(status_code=400, detail="上传服装素材请填写服装套装名称")
+
     for file in files:
         content = file.file.read()
-        file_path = FileTool.save_upload(content, file.filename)
+        if not content:
+            continue
+        file_path = FileTool.save_content_material(
+            content,
+            file.filename,
+            category=category,
+            outfit_set=outfit_set,
+            shoot_type=shoot_type,
+        )
+        shoot = normalize_shoot_type(shoot_type) if category == "clothing" else None
+        meta = {"parent_dir": "服装素材/" + outfit_set if outfit_set else None}
+        if category == "clothing":
+            meta = {
+                "parent_dir": f"服装素材/{outfit_set}",
+                "outfit_set": outfit_set,
+                "sub_category": shoot,
+            }
+        elif category == "model":
+            meta = {"parent_dir": "模特卡"}
+        elif category == "lookbook_ref":
+            meta = {"parent_dir": "lookbook参考"}
+        elif category == "scene":
+            meta = {"parent_dir": "场景素材"}
+
         mid = MaterialTool.create(
-            name=name or file.filename,
+            name=file.filename,
             type="upload",
             category=category,
             file_path=file_path,
+            metadata=meta,
         )
-        results.append({"id": mid, "name": file.filename, "file_path": file_path})
-    return {"message": f"上传{len(results)}个素材", "materials": results}
+        from services.thumbnail_service import ensure_material_thumbnail
+        ensure_material_thumbnail(mid, file_path)
+        results.append({
+            "id": mid,
+            "name": file.filename,
+            "file_path": file_path,
+            "outfit_set": outfit_set,
+            "shoot_type": shoot,
+        })
+
+    backfill_material_columns(db)
+    return {"message": f"成功上传 {len(results)} 个素材", "materials": results, "count": len(results)}
 
 
 @router.delete("/{material_id}")
@@ -73,6 +185,8 @@ def delete_material(material_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="素材不存在")
     if material.file_path and os.path.exists(material.file_path):
         os.remove(material.file_path)
+    if material.thumbnail_path and os.path.exists(material.thumbnail_path):
+        os.remove(material.thumbnail_path)
     db.delete(material)
     db.commit()
     return {"message": "已删除"}
@@ -186,73 +300,55 @@ def scan_default_materials(db: Session = Depends(get_db)):
                     )
                     imported += 1
 
-    return {"message": f"扫描完成，导入{imported}个素材", "imported": imported}
+    backfilled = backfill_material_columns(db)
+    thumbs = rebuild_missing_thumbnails(db)
+    return {
+        "message": f"扫描完成，导入{imported}个素材",
+        "imported": imported,
+        "count": imported,
+        "thumbnails": thumbs,
+        "backfilled": backfilled,
+    }
+
+
+@router.post("/thumbnails/rebuild")
+def rebuild_thumbnails(db: Session = Depends(get_db)):
+    """为全部素材补全/更新缩略图。"""
+    count = rebuild_missing_thumbnails(db)
+    return {"message": f"已生成/更新 {count} 个缩略图", "count": count}
 
 
 @router.get("/grouped")
-def get_grouped_materials(db: Session = Depends(get_db)):
-    """获取按分组组织的素材"""
-    materials = db.query(Material).all()
-
-    model_cards = []
-    clothing_sets_map = {}
-    lookbook_refs = []
-    scenes = []
-
-    for m in materials:
-        meta = {}
-        if m.metadata_json:
-            try:
-                meta = json.loads(m.metadata_json)
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        item = {
-            "id": m.id,
-            "name": m.name,
-            "type": m.type,
-            "category": m.category,
-            "file_path": m.file_path,
-            "thumbnail_path": m.thumbnail_path,
-            "parent_dir": m.parent_dir or meta.get("parent_dir"),
-            "sub_category": m.sub_category or meta.get("sub_category"),
-            "outfit_set": m.outfit_set or meta.get("outfit_set"),
-            "metadata": meta,
-        }
-
-        if m.category == "model":
-            model_cards.append(item)
-        elif m.category == "clothing":
-            outfit_name = item["outfit_set"] or "未分组"
-            sub_cat = item["sub_category"] or "时尚拍摄"
-            if outfit_name not in clothing_sets_map:
-                clothing_sets_map[outfit_name] = {
-                    "name": outfit_name,
-                    "items": [],
-                    "sub_groups": {"人台图": [], "平铺图": [], "时尚拍摄": []},
-                    "人台图": [],
-                    "平铺图": [],
-                    "时尚拍摄": [],
-                }
-            item["sub_type"] = sub_cat
-            clothing_sets_map[outfit_name]["items"].append(item)
-            clothing_sets_map[outfit_name]["sub_groups"].setdefault(sub_cat, []).append(item)
-            clothing_sets_map[outfit_name].setdefault(sub_cat, []).append(item)
-        elif m.category == "lookbook_ref":
-            lookbook_refs.append(item)
-        elif m.category in ("scene", "background"):
-            scenes.append(item)
-
-    clothing_sets = list(clothing_sets_map.values())
-
-    return {
-        "model_cards": model_cards,
-        "models": model_cards,
-        "clothing_sets": clothing_sets,
-        "lookbook_refs": lookbook_refs,
-        "scenes": scenes,
-        "backgrounds": scenes,
-    }
+def get_grouped_materials(
+    sections: str = Query(
+        None,
+        description="按需加载：model,clothing,refs,scenes（逗号分隔）；不传则返回全部",
+    ),
+    outfit_set: str = Query(None, description="按服装套装筛选，如 连衣裙"),
+    shoot_type: str = Query(None, description="按拍摄类型筛选：人台图/平铺图/时尚拍摄"),
+    db: Session = Depends(get_db),
+):
+    """获取按分组组织的素材，支持分步懒加载与筛选。"""
+    backfill_material_columns(db)
+    query = db.query(Material)
+    if outfit_set:
+        query = query.filter(
+            (Material.outfit_set == outfit_set) | (Material.metadata_json.contains(outfit_set))
+        )
+    if shoot_type:
+        st = normalize_shoot_type(shoot_type)
+        query = query.filter(
+            (Material.sub_category == st) | (Material.metadata_json.contains(st))
+        )
+    materials = query.all()
+    section_set = None
+    if sections:
+        section_set = {s.strip() for s in sections.split(",") if s.strip()}
+    result = _build_grouped(materials, section_set)
+    if "clothing" in (section_set or {"clothing"}):
+        result["shoot_types"] = list(SHOOT_TYPES)
+        result["outfit_sets"] = sorted({s["name"] for s in result.get("clothing_sets", [])})
+    return result
 
 
 @router.post("/check-conflict")

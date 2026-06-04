@@ -47,7 +47,12 @@ export const scanMaterials = () => api.get('/api/materials/scan');
 
 // 素材管理 - content目录
 export const scanContentMaterials = () => api.get('/api/materials/scan');
-export const getGroupedMaterials = () => api.get('/api/materials/grouped');
+export const getGroupedMaterials = (params?: {
+  sections?: string;
+  outfit_set?: string;
+  shoot_type?: string;
+}) => api.get('/api/materials/grouped', { params: params || undefined });
+export const rebuildThumbnails = () => api.post('/api/materials/thumbnails/rebuild');
 export const checkClothingConflict = (items: any[]) =>
     api.post('/api/materials/check-conflict', { items });
 

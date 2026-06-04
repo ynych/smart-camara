@@ -6,6 +6,7 @@ from models import Requirement, LookbookTask, StyleTemplate, GeneratedImage, Pro
 from agents.requirement_agent import RequirementAgent
 from agents.scene_design_agent import SceneDesignAgent
 from agents.image_synth_agent import ImageSynthAgent
+from agents.prompt_agent import PromptAgent
 from tools.file_tool import FileTool
 from tools.material_tool import MaterialTool
 from tools.image_tool import ImageTool
@@ -74,6 +75,125 @@ class LookbookSkill:
         finally:
             db.close()
 
+    def _gather_prompt_context(
+        self,
+        model_id: str,
+        clothing_ids: list,
+        reference_id: str = None,
+        scene_id: str = None,
+        business_context: dict = None,
+        acceptance_criteria: str = "",
+        size: str = "3:4",
+    ) -> dict:
+        model_info = MaterialTool.get(model_id) if model_id else None
+        model_desc = "优雅的亚洲女性模特"
+        if model_info:
+            meta = model_info.get("metadata", {})
+            model_desc = meta.get("description", model_info.get("name", model_desc))
+
+        clothing_items = MaterialTool.get_by_ids(clothing_ids) if clothing_ids else []
+        clothing_parts = []
+        for item in clothing_items:
+            meta = item.get("metadata", {})
+            outfit = item.get("outfit_set") or meta.get("outfit_set", "")
+            shoot = item.get("sub_category") or meta.get("sub_category", "")
+            desc = meta.get("description") or item.get("name", "")
+            label = f"{outfit}({shoot})：{desc}" if outfit else desc
+            clothing_parts.append(label)
+        clothing_desc = "；".join(clothing_parts) if clothing_parts else "时尚服装"
+
+        reference_info = MaterialTool.get(reference_id) if reference_id else None
+        style_hint = ""
+        if reference_info:
+            style_hint = self._extract_style_from_filename(reference_info.get("name", ""))
+
+        scene_info = MaterialTool.get(scene_id) if scene_id else None
+        scene_desc = "电商Lookbook拍摄场景"
+        if scene_info:
+            scene_desc = scene_info.get("metadata", {}).get("description", scene_info.get("name", scene_desc))
+
+        business_context = business_context or {}
+        context_parts = []
+        if business_context.get("merchant_need"):
+            context_parts.append(f"商家需求：{business_context['merchant_need']}")
+        if business_context.get("target_audience"):
+            context_parts.append(f"目标用户画像：{business_context['target_audience']}")
+        if acceptance_criteria:
+            context_parts.append(f"验收标准：{acceptance_criteria}")
+        context_hint = "；".join(context_parts)
+
+        return {
+            "model_desc": model_desc,
+            "clothing_desc": clothing_desc,
+            "style_hint": style_hint,
+            "scene_desc": scene_desc,
+            "context_hint": context_hint,
+            "size": size,
+            "business_context": business_context,
+            "acceptance_criteria": acceptance_criteria,
+        }
+
+    async def build_prompts_async(
+        self,
+        model_id: str,
+        clothing_ids: list,
+        reference_id: str = None,
+        quantity: int = 4,
+        size: str = "3:4",
+        scene_id: str = None,
+        business_context: dict = None,
+        acceptance_criteria: str = "",
+    ) -> tuple[list, str]:
+        """
+        构建提示词列表。优先调用大模型，失败则回退模板。
+        返回 (prompts, source) source 为 llm 或 template。
+        """
+        ctx = self._gather_prompt_context(
+            model_id, clothing_ids, reference_id, scene_id,
+            business_context, acceptance_criteria, size,
+        )
+        angle_templates = self._get_angle_templates(quantity)
+
+        agent = PromptAgent()
+        llm_prompts = await agent.generate_prompts(
+            model_desc=ctx["model_desc"],
+            clothing_desc=ctx["clothing_desc"],
+            scene_desc=ctx["scene_desc"],
+            style_hint=ctx["style_hint"],
+            size=size,
+            quantity=quantity,
+            angle_templates=angle_templates,
+            business_context=ctx["business_context"],
+            acceptance_criteria=acceptance_criteria,
+        )
+        if llm_prompts:
+            for p in llm_prompts:
+                p["prompt"] = self._apply_feedback_improvements(p["prompt"])
+            return llm_prompts, "llm"
+
+        prompts = []
+        for i, template in enumerate(angle_templates):
+            prompt = self._compose_prompt(
+                model_desc=ctx["model_desc"],
+                clothing_desc=ctx["clothing_desc"],
+                angle_name=template["name"],
+                angle_desc=template["desc"],
+                style_hint=ctx["style_hint"],
+                scene_desc=ctx["scene_desc"],
+                size=size,
+                context_hint=ctx["context_hint"],
+            )
+            prompt = self._apply_feedback_improvements(prompt)
+            prompts.append({
+                "index": i,
+                "angle_name": template["name"],
+                "angle_desc": template["desc"],
+                "prompt": prompt,
+                "editable": True,
+                "source": "template",
+            })
+        return prompts, "template"
+
     def build_prompts(
         self,
         model_id: str,
@@ -85,81 +205,47 @@ class LookbookSkill:
         business_context: dict = None,
         acceptance_criteria: str = "",
     ) -> list:
-        """
-        构建差异化角度的prompt列表
-
-        Args:
-            model_id: 模特素材ID
-            clothing_ids: 服装素材ID列表
-            reference_id: 参考图素材ID（可选）
-            quantity: 生成数量
-
-        Returns:
-            [{"index": 0, "angle_name": "...", "angle_desc": "...", "prompt": "...", "editable": True}, ...]
-        """
-        # 获取模特信息
-        model_info = MaterialTool.get(model_id) if model_id else None
-        model_desc = "优雅的亚洲女性模特"
-        if model_info:
-            meta = model_info.get("metadata", {})
-            model_desc = meta.get("description", model_info.get("name", model_desc))
-
-        # 获取服装信息
-        clothing_items = MaterialTool.get_by_ids(clothing_ids) if clothing_ids else []
-        clothing_descs = []
-        for item in clothing_items:
-            meta = item.get("metadata", {})
-            desc = meta.get("description", item.get("name", ""))
-            clothing_descs.append(desc)
-        clothing_desc = "、".join(clothing_descs) if clothing_descs else "时尚服装"
-
-        # 获取参考图信息
-        reference_info = MaterialTool.get(reference_id) if reference_id else None
-        style_hint = ""
-        if reference_info:
-            style_hint = self._extract_style_from_filename(reference_info.get("name", ""))
-
-        scene_info = MaterialTool.get(scene_id) if scene_id else None
-        scene_desc = "电商Lookbook拍摄场景"
-        if scene_info:
-            scene_desc = scene_info.get("metadata", {}).get("description", scene_info.get("name", scene_desc))
-
-        context_parts = []
-        business_context = business_context or {}
-        if business_context.get("merchant_need"):
-            context_parts.append(f"商家需求：{business_context['merchant_need']}")
-        if business_context.get("target_audience"):
-            context_parts.append(f"目标用户画像：{business_context['target_audience']}")
-        if acceptance_criteria:
-            context_parts.append(f"验收标准：{acceptance_criteria}")
-        context_hint = "；".join(context_parts)
-
-        # 获取角度模板
-        angle_templates = self._get_angle_templates(quantity)
-
-        # 构建每个角度的prompt
-        prompts = []
-        for i, template in enumerate(angle_templates):
-            prompt = self._compose_prompt(
-                model_desc=model_desc,
-                clothing_desc=clothing_desc,
-                angle_name=template["name"],
-                angle_desc=template["desc"],
-                style_hint=style_hint,
-                scene_desc=scene_desc,
-                size=size,
-                context_hint=context_hint,
+        """同步模板构建（兼容旧调用）。"""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                raise RuntimeError("use build_prompts_async in async context")
+            prompts, _ = loop.run_until_complete(
+                self.build_prompts_async(
+                    model_id, clothing_ids, reference_id, quantity, size,
+                    scene_id, business_context, acceptance_criteria,
+                )
             )
-            prompt = self._apply_feedback_improvements(prompt)
-            prompts.append({
-                "index": i,
-                "angle_name": template["name"],
-                "angle_desc": template["desc"],
-                "prompt": prompt,
-                "editable": True,
-            })
-
-        return prompts
+            return prompts
+        except RuntimeError:
+            ctx = self._gather_prompt_context(
+                model_id, clothing_ids, reference_id, scene_id,
+                business_context, acceptance_criteria, size,
+            )
+            angle_templates = self._get_angle_templates(quantity)
+            prompts = []
+            for i, template in enumerate(angle_templates):
+                prompt = self._compose_prompt(
+                    model_desc=ctx["model_desc"],
+                    clothing_desc=ctx["clothing_desc"],
+                    angle_name=template["name"],
+                    angle_desc=template["desc"],
+                    style_hint=ctx["style_hint"],
+                    scene_desc=ctx["scene_desc"],
+                    size=size,
+                    context_hint=ctx["context_hint"],
+                )
+                prompt = self._apply_feedback_improvements(prompt)
+                prompts.append({
+                    "index": i,
+                    "angle_name": template["name"],
+                    "angle_desc": template["desc"],
+                    "prompt": prompt,
+                    "editable": True,
+                    "source": "template",
+                })
+            return prompts
 
     def _get_angle_templates(self, quantity: int) -> list:
         """获取角度模板列表"""

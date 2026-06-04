@@ -26,6 +26,7 @@ data/*.db-wal
 # Uploads & generated assets (runtime data)
 assets/uploads/
 assets/generated/
+assets/thumbs/
 backend/uploads/
 
 # Logs
