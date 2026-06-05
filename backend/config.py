@@ -26,29 +26,40 @@ for d in [ASSETS_DIR, UPLOADS_DIR, GENERATED_DIR, THUMBS_DIR]:
     os.makedirs(d, exist_ok=True)
 
 def get_chat_api_config():
-    """文本大模型（提示词生成等）配置，优先 VOLCANO_CHAT_ENDPOINT。"""
-    chat_endpoint = os.environ.get("VOLCANO_CHAT_ENDPOINT") or os.environ.get("VOLCANO_LLM_ENDPOINT", "")
-    chat_key = os.environ.get("VOLCANO_CHAT_API_KEY") or os.environ.get("VOLCANO_API_KEY", "")
+    """文本大模型配置：env 优先，缺项从 DB volcano_chat / volcano 生图 Key 补齐。"""
+    chat_endpoint = (
+        os.environ.get("VOLCANO_CHAT_ENDPOINT")
+        or os.environ.get("VOLCANO_LLM_ENDPOINT")
+        or ""
+    ).strip()
+    chat_key = (
+        os.environ.get("VOLCANO_CHAT_API_KEY")
+        or os.environ.get("VOLCANO_API_KEY")
+        or ""
+    ).strip()
+
+    db = SessionLocal()
+    try:
+        chat_cfg = db.query(ApiConfig).filter(ApiConfig.provider == "volcano_chat").first()
+        volcano_cfg = db.query(ApiConfig).filter(ApiConfig.provider == "volcano").first()
+        if chat_cfg:
+            if not chat_endpoint and chat_cfg.endpoint:
+                chat_endpoint = chat_cfg.endpoint.strip()
+            if not chat_key and chat_cfg.api_key:
+                chat_key = chat_cfg.api_key.strip()
+        if not chat_key and volcano_cfg and volcano_cfg.api_key:
+            chat_key = volcano_cfg.api_key.strip()
+    finally:
+        db.close()
+
     if chat_endpoint and chat_key:
         return {
-            "provider": "volcano",
+            "provider": "volcano_chat",
             "api_key": chat_key,
             "endpoint": chat_endpoint,
             "model": os.environ.get("VOLCANO_CHAT_MODEL", "doubao"),
         }
-    db = SessionLocal()
-    try:
-        config = db.query(ApiConfig).filter(ApiConfig.provider == "volcano_chat").first()
-        if config and config.endpoint and config.api_key:
-            return {
-                "provider": config.provider,
-                "api_key": config.api_key,
-                "endpoint": config.endpoint,
-                "model": config.model,
-            }
-    finally:
-        db.close()
-    return {"provider": "volcano", "api_key": "", "endpoint": "", "model": ""}
+    return {"provider": "volcano_chat", "api_key": "", "endpoint": "", "model": ""}
 
 
 def get_image_api_config():
@@ -76,6 +87,40 @@ def init_default_data():
         if not existing:
             config = ApiConfig(**DEFAULT_VOLCANO_CONFIG)
             db.add(config)
+
+        chat_endpoint = (
+            os.environ.get("VOLCANO_CHAT_ENDPOINT")
+            or os.environ.get("VOLCANO_LLM_ENDPOINT")
+            or ""
+        ).strip()
+        volcano_row = db.query(ApiConfig).filter(ApiConfig.provider == "volcano").first()
+        chat_key = (
+            os.environ.get("VOLCANO_CHAT_API_KEY")
+            or os.environ.get("VOLCANO_API_KEY")
+            or (volcano_row.api_key if volcano_row else "")
+        ).strip()
+        chat_existing = db.query(ApiConfig).filter(ApiConfig.provider == "volcano_chat").first()
+        if not chat_existing and chat_endpoint and chat_key:
+            db.add(ApiConfig(
+                provider="volcano_chat",
+                api_key=chat_key,
+                endpoint=chat_endpoint,
+                model=os.environ.get("VOLCANO_CHAT_MODEL", "doubao"),
+                is_active=1,
+            ))
+        elif chat_existing:
+            if chat_endpoint and chat_existing.endpoint != chat_endpoint:
+                chat_existing.endpoint = chat_endpoint
+            if chat_key and not chat_existing.api_key:
+                chat_existing.api_key = chat_key
+        elif chat_endpoint and volcano_row and volcano_row.api_key:
+            db.add(ApiConfig(
+                provider="volcano_chat",
+                api_key=volcano_row.api_key,
+                endpoint=chat_endpoint,
+                model=os.environ.get("VOLCANO_CHAT_MODEL", "doubao"),
+                is_active=1,
+            ))
 
         # 初始化风格模板
         if db.query(StyleTemplate).count() == 0:

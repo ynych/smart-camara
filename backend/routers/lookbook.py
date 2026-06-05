@@ -192,7 +192,7 @@ async def generate_prompt(data: dict):
             quantity=quantity,
             business_context=business_context,
         )
-        prompts, prompt_source = await skill.build_prompts_async(
+        prompts, prompt_source, llm_error = await skill.build_prompts_async(
             model_id,
             clothing_ids,
             reference_id,
@@ -206,6 +206,7 @@ async def generate_prompt(data: dict):
             "prompts": prompts,
             "acceptance_criteria": criteria,
             "prompt_source": prompt_source,
+            "llm_error": llm_error,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -277,26 +278,132 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
         "completed_at": task.completed_at.isoformat() if task.completed_at else None,
     }
 
+def _item_matches_gallery_filters(item: dict, task_id_q, model_id, clothing_id, reference_id) -> bool:
+    if task_id_q and task_id_q.strip().lower() not in item["task_id"].lower():
+        return False
+    sm = item.get("source_materials") or {}
+    if model_id and (not sm.get("model") or sm["model"].get("id") != model_id):
+        return False
+    if clothing_id and not any(c.get("id") == clothing_id for c in sm.get("clothing") or []):
+        return False
+    if reference_id and (not sm.get("reference") or sm["reference"].get("id") != reference_id):
+        return False
+    return True
+
+
+def _task_display_images(db: Session, task: LookbookTask) -> list:
+    """优先从 generated_images 表读取，含每张图的 prompt。"""
+    rows = (
+        db.query(GeneratedImage)
+        .filter(GeneratedImage.task_id == task.id)
+        .order_by(GeneratedImage.created_at.asc())
+        .all()
+    )
+    if rows:
+        return [
+            {
+                "id": g.id,
+                "angle": g.angle,
+                "path": g.file_path,
+                "prompt": g.prompt,
+                "status": g.status,
+                "feedback": g.feedback,
+            }
+            for g in rows
+        ]
+    if task.generated_images:
+        try:
+            return json.loads(task.generated_images)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return []
+
+
+def _parse_seedream_plan(task: LookbookTask, req: Requirement | None) -> list | None:
+    raw = task.selected_materials if task else None
+    if not raw and req and req.selected_materials:
+        raw = req.selected_materials
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        return data.get("seedream_image_slots")
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _collect_filter_options(items: list) -> dict:
+    models_map = {}
+    clothing_map = {}
+    refs_map = {}
+    for item in items:
+        sm = item.get("source_materials") or {}
+        model = sm.get("model")
+        if model and model.get("id"):
+            models_map[model["id"]] = model.get("name") or model["id"][:8]
+        for c in sm.get("clothing") or []:
+            if c.get("id"):
+                clothing_map[c["id"]] = c.get("name") or c["id"][:8]
+        ref = sm.get("reference")
+        if ref and ref.get("id"):
+            refs_map[ref["id"]] = ref.get("name") or ref["id"][:8]
+    return {
+        "models": [{"id": k, "name": v} for k, v in models_map.items()],
+        "clothing": [{"id": k, "name": v} for k, v in clothing_map.items()],
+        "references": [{"id": k, "name": v} for k, v in refs_map.items()],
+    }
+
+
 @router.get("/gallery")
-def get_gallery(db: Session = Depends(get_db)):
-    """获取相册（已完成的Lookbook）"""
-    tasks = db.query(LookbookTask).filter(LookbookTask.status == "completed").order_by(LookbookTask.created_at.desc()).all()
-    results = []
+def get_gallery(
+    task_id: str = Query(None, description="任务 ID（支持部分匹配）"),
+    model_id: str = Query(None, description="模特素材 ID"),
+    clothing_id: str = Query(None, description="服装素材 ID"),
+    reference_id: str = Query(None, description="参考图素材 ID"),
+    db: Session = Depends(get_db),
+):
+    """历史任务列表，支持按模特/服装/参考图/任务 ID 筛选。"""
+    tasks = db.query(LookbookTask).order_by(LookbookTask.created_at.desc()).all()
+    all_items = []
     for task in tasks:
         req = db.query(Requirement).filter(Requirement.id == task.requirement_id).first()
-        images = json.loads(task.generated_images) if task.generated_images else []
-        results.append({
+        images = _task_display_images(db, task)
+        prompts = []
+        if task.prompt_overrides:
+            try:
+                prompts = json.loads(task.prompt_overrides)
+            except (json.JSONDecodeError, TypeError):
+                prompts = []
+        all_items.append({
             "task_id": task.id,
             "requirement_id": task.requirement_id,
             "style_id": task.style_id,
+            "status": task.status,
+            "progress": task.progress,
+            "error_message": task.error_message,
             "images": images,
+            "prompts": prompts,
+            "seedream_image_slots": _parse_seedream_plan(task, req),
             "source_image": req.source_image_path if req else None,
             "size": task.size,
             "acceptance_criteria": task.acceptance_criteria,
             "source_materials": _resolve_source_materials(task, req),
             "created_at": task.created_at.isoformat() if task.created_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
         })
-    return {"gallery": results}
+
+    has_filter = any([task_id, model_id, clothing_id, reference_id])
+    filtered = (
+        [item for item in all_items if _item_matches_gallery_filters(item, task_id, model_id, clothing_id, reference_id)]
+        if has_filter
+        else all_items
+    )
+
+    return {
+        "gallery": filtered,
+        "total": len(filtered),
+        "filter_options": _collect_filter_options(all_items),
+    }
 
 @router.post("/images/{image_id}/review")
 def review_image(image_id: str, data: dict):

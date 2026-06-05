@@ -38,7 +38,6 @@ import {
   generateLookbook,
   generatePrompt,
   getGroupedMaterials,
-  getTaskList,
   reviewGeneratedImage,
 } from '../services/api';
 import { toContentUrl } from '../utils/contentUrl';
@@ -76,8 +75,6 @@ const LookbookStudio: React.FC = () => {
   const [currentStep, setCurrentStep] = useState(0);
   const [materials, setMaterials] = useState<any>({});
   const [materialsLoading, setMaterialsLoading] = useState(false);
-  const [tasks, setTasks] = useState<any[]>([]);
-
   const [selectedModel, setSelectedModel] = useState<any>(null);
   const [selectedClothing, setSelectedClothing] = useState<ClothingItem[]>([]);
   const [selectedReference, setSelectedReference] = useState<any>(null);
@@ -126,19 +123,6 @@ const LookbookStudio: React.FC = () => {
     }
     setCurrentStep(step);
   };
-
-  const loadTasks = useCallback(async () => {
-    try {
-      const res = await getTaskList();
-      setTasks(res.data.tasks || []);
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
-    loadTasks();
-  }, [loadTasks]);
 
   useEffect(() => {
     if (currentStep <= 2) {
@@ -212,7 +196,8 @@ const LookbookStudio: React.FC = () => {
       if (src === 'llm') {
         message.success('已由大模型生成验收标准与提示词');
       } else {
-        message.warning('未配置对话模型或调用失败，已使用模板生成提示词（请在 .env 设置 VOLCANO_CHAT_ENDPOINT）');
+        const detail = res.data?.llm_error || '未配置对话模型或调用失败';
+        message.warning(`${detail}；已使用模板生成提示词`, 8);
       }
     } catch (e: any) {
       message.error('生成提示词失败: ' + (e.response?.data?.detail || e.message));
@@ -245,8 +230,7 @@ const LookbookStudio: React.FC = () => {
       setGeneratedImages(res.data.images || []);
       setTaskStatus('completed');
       setTaskProgress(100);
-      await loadTasks();
-      message.success('Seedream 生图完成，等待验收');
+      message.success('Seedream 生图完成，可在「历史任务」查看');
     } catch (e: any) {
       setTaskStatus('failed');
       message.error('生图失败: ' + (e.response?.data?.detail || e.message));
@@ -611,28 +595,6 @@ const LookbookStudio: React.FC = () => {
         {currentStep === 3 && renderStep3()}
         {currentStep === 4 && renderStep4()}
       </Spin>
-
-      {tasks.length > 0 && (
-        <div style={{ marginTop: 32 }}>
-          <Divider />
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <h3 style={{ margin: 0 }}>最近任务</h3>
-            <Button size="small" onClick={loadTasks}>刷新</Button>
-          </div>
-          <Space direction="vertical" style={{ width: '100%' }}>
-            {tasks.slice(0, 6).map((task) => (
-              <Card size="small" key={task.id}>
-                <Space>
-                  <span>任务 {task.id?.slice(0, 8)}</span>
-                  <Tag color={task.status === 'completed' ? 'success' : task.status === 'failed' ? 'error' : 'processing'}>{task.status}</Tag>
-                  <span>{task.size}</span>
-                  <span>{task.quantity || task.generated_images?.length || 0}张</span>
-                </Space>
-              </Card>
-            ))}
-          </Space>
-        </div>
-      )}
 
       <Modal
         title="不合格反馈"

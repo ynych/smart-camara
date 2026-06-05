@@ -1,28 +1,110 @@
-import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Empty, Image, Tag, Button, message, Drawer, Divider, Typography } from 'antd';
-import { EyeOutlined, UserOutlined, SkinOutlined, PictureOutlined, EnvironmentOutlined } from '@ant-design/icons';
-import { getGallery } from '../services/api';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  Card,
+  Collapse,
+  Row,
+  Col,
+  Empty,
+  Image,
+  Tag,
+  Button,
+  message,
+  Drawer,
+  Divider,
+  Typography,
+  Select,
+  Input,
+  Space,
+  Alert,
+} from 'antd';
+import {
+  EyeOutlined,
+  UserOutlined,
+  SkinOutlined,
+  PictureOutlined,
+  EnvironmentOutlined,
+  SearchOutlined,
+  ClearOutlined,
+  FileTextOutlined,
+} from '@ant-design/icons';
+import { getGallery, type GalleryFilters } from '../services/api';
 import { toContentUrl } from '../utils/contentUrl';
 import { toMediaUrl, mediaPreview } from '../utils/mediaUrl';
 
-const { Text } = Typography;
+const { Text, Paragraph } = Typography;
+
+type FilterOption = { id: string; name: string };
+
+const statusTag: Record<string, { color: string; label: string }> = {
+  completed: { color: 'success', label: '已完成' },
+  failed: { color: 'error', label: '失败' },
+  generating: { color: 'processing', label: '生成中' },
+  pending: { color: 'default', label: '待处理' },
+};
 
 const Gallery: React.FC = () => {
   const [gallery, setGallery] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [filterOptions, setFilterOptions] = useState<{
+    models: FilterOption[];
+    clothing: FilterOption[];
+    references: FilterOption[];
+  }>({ models: [], clothing: [], references: [] });
+  const [filters, setFilters] = useState<GalleryFilters>({});
+  const [taskIdInput, setTaskIdInput] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeItem, setActiveItem] = useState<any>(null);
+  const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
+
+  const loadGallery = useCallback(async (applied?: GalleryFilters) => {
+    setLoading(true);
+    try {
+      const res = await getGallery(applied);
+      const items = res.data.gallery || [];
+      setGallery(items);
+      setTotal(res.data.total ?? items.length ?? 0);
+      const opts = res.data.filter_options;
+      if (opts) {
+        setFilterOptions({
+          models: opts.models || [],
+          clothing: opts.clothing || [],
+          references: opts.references || [],
+        });
+      }
+    } catch {
+      message.error('加载历史任务失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     loadGallery();
   }, []);
 
-  const loadGallery = async () => {
-    try {
-      const res = await getGallery();
-      setGallery(res.data.gallery || []);
-    } catch (e) {
-      message.error('加载相册失败');
+  useEffect(() => {
+    if (gallery.length > 0 && expandedKeys.length === 0) {
+      setExpandedKeys([gallery[0].task_id]);
     }
+  }, [gallery, expandedKeys.length]);
+
+  const applyFilters = () => {
+    const next: GalleryFilters = {
+      ...filters,
+      task_id: taskIdInput.trim() || undefined,
+    };
+    if (!next.task_id) delete next.task_id;
+    setFilters(next);
+    setExpandedKeys([]);
+    loadGallery(next);
+  };
+
+  const clearFilters = () => {
+    setFilters({});
+    setTaskIdInput('');
+    setExpandedKeys([]);
+    loadGallery({});
   };
 
   const openMaterials = (item: any) => {
@@ -43,6 +125,75 @@ const Gallery: React.FC = () => {
       </Text>
     </Card>
   );
+
+  const renderPromptsSection = () => {
+    const images = activeItem?.images || [];
+    const hasPrompt = images.some((img: any) => img.prompt);
+    if (!hasPrompt && !(activeItem?.prompts?.length)) {
+      return <Text type="secondary">该任务未保存提示词记录</Text>;
+    }
+    const list = hasPrompt
+      ? images
+      : (activeItem?.prompts || []).map((p: any, idx: number) => ({
+          angle: p.angle_name || `图片${idx + 1}`,
+          prompt: p.prompt,
+          status: undefined,
+        }));
+
+    return (
+      <div>
+        {list.map((img: any, idx: number) => (
+          <div key={img.id || idx} style={{ marginBottom: 16 }}>
+            <Text strong>
+              <FileTextOutlined /> {img.angle || `图片 ${idx + 1}`}
+              {img.status && (
+                <Tag
+                  style={{ marginLeft: 8 }}
+                  color={img.status === 'approved' ? 'success' : img.status === 'rejected' ? 'error' : 'default'}
+                >
+                  {img.status === 'approved' ? '合格' : img.status === 'rejected' ? '不合格' : '待验收'}
+                </Tag>
+              )}
+            </Text>
+            <Paragraph
+              style={{
+                marginTop: 8,
+                marginBottom: 0,
+                whiteSpace: 'pre-wrap',
+                fontSize: 13,
+                background: '#fafafa',
+                padding: 12,
+                borderRadius: 8,
+                border: '1px solid #f0f0f0',
+              }}
+            >
+              {img.prompt || '（无）'}
+            </Paragraph>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderSeedreamPlan = () => {
+    const slots = activeItem?.seedream_image_slots;
+    if (!slots?.length) return null;
+    return (
+      <>
+        <Divider />
+        <Text strong>生图参考图顺序（Seedream 多图融合）</Text>
+        <ul style={{ paddingLeft: 20, marginTop: 8, fontSize: 13 }}>
+          {slots.map((s: any) => (
+            <li key={s.index} style={{ marginBottom: 4 }}>
+              图{s.index}：{s.role}
+              {!s.resolved && <Tag color="error" style={{ marginLeft: 6 }}>文件未读取</Tag>}
+              {s.name && <Text type="secondary"> — {s.name}</Text>}
+            </li>
+          ))}
+        </ul>
+      </>
+    );
+  };
 
   const renderSourceMaterials = () => {
     const src = activeItem?.source_materials;
@@ -79,74 +230,152 @@ const Gallery: React.FC = () => {
     );
   };
 
+  const renderTaskPanel = (item: any) => (
+    <>
+      {item.status === 'failed' && item.error_message && (
+        <Alert type="error" message={item.error_message} style={{ marginBottom: 12 }} showIcon />
+      )}
+      {item.images?.length > 0 ? (
+        <Row gutter={[16, 16]}>
+          {item.images.map((img: any, idx: number) => (
+            <Col span={6} key={img.id || idx}>
+              <Image
+                src={toContentUrl(img.path || '')}
+                alt={img.angle}
+                style={{ height: 200, objectFit: 'cover', borderRadius: 8 }}
+                loading="lazy"
+              />
+              <div style={{ textAlign: 'center', marginTop: 4 }}>
+                <Tag>{img.angle}</Tag>
+                {img.status && (
+                  <Tag color={img.status === 'approved' ? 'success' : img.status === 'rejected' ? 'error' : 'default'}>
+                    {img.status === 'approved' ? '合格' : img.status === 'rejected' ? '不合格' : '待验收'}
+                  </Tag>
+                )}
+              </div>
+            </Col>
+          ))}
+        </Row>
+      ) : (
+        <Text type="secondary">{item.status === 'generating' ? '生成中…' : '暂无生成图'}</Text>
+      )}
+    </>
+  );
+
+  const collapseItems = gallery.map((item: any) => {
+    const st = statusTag[item.status] || { color: 'default', label: item.status || '未知' };
+    return {
+      key: item.task_id,
+      label: (
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, width: '100%' }}>
+          <Text strong>任务 {item.task_id.slice(0, 8)}…</Text>
+          <Tag color={st.color}>{st.label}</Tag>
+          {item.size && <Tag>{item.size}</Tag>}
+          {item.images?.length > 0 && <Tag>{item.images.length} 张</Tag>}
+          {item.created_at && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {new Date(item.created_at).toLocaleString()}
+            </Text>
+          )}
+          <Button
+            type="link"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={(e) => {
+              e.stopPropagation();
+              openMaterials(item);
+            }}
+          >
+            查看素材与提示词
+          </Button>
+        </div>
+      ),
+      children: renderTaskPanel(item),
+    };
+  });
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h2 style={{ margin: 0 }}>我的相册</h2>
-        <Button onClick={loadGallery}>刷新</Button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>历史任务</h2>
+        <Button onClick={() => loadGallery(filters)} loading={loading}>刷新</Button>
       </div>
+
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Space wrap style={{ width: '100%' }} align="start">
+          <Input
+            placeholder="任务 ID（支持部分匹配）"
+            value={taskIdInput}
+            onChange={(e) => setTaskIdInput(e.target.value)}
+            onPressEnter={applyFilters}
+            style={{ width: 220 }}
+            allowClear
+          />
+          <Select
+            placeholder="模特图"
+            allowClear
+            style={{ minWidth: 160 }}
+            value={filters.model_id}
+            onChange={(v) => setFilters((f) => ({ ...f, model_id: v }))}
+            options={filterOptions.models.map((m) => ({ value: m.id, label: m.name }))}
+          />
+          <Select
+            placeholder="服装图"
+            allowClear
+            style={{ minWidth: 160 }}
+            value={filters.clothing_id}
+            onChange={(v) => setFilters((f) => ({ ...f, clothing_id: v }))}
+            options={filterOptions.clothing.map((c) => ({ value: c.id, label: c.name }))}
+          />
+          <Select
+            placeholder="参考图"
+            allowClear
+            style={{ minWidth: 160 }}
+            value={filters.reference_id}
+            onChange={(v) => setFilters((f) => ({ ...f, reference_id: v }))}
+            options={filterOptions.references.map((r) => ({ value: r.id, label: r.name }))}
+          />
+          <Button type="primary" icon={<SearchOutlined />} onClick={applyFilters}>
+            筛选
+          </Button>
+          <Button icon={<ClearOutlined />} onClick={clearFilters}>
+            清空
+          </Button>
+        </Space>
+        {total > 0 && (
+          <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>
+            共 {total} 条历史任务
+          </Text>
+        )}
+      </Card>
+
       {gallery.length === 0 ? (
-        <Empty description="还没有生成 Lookbook，去生图工作台创建一个吧！" />
+        <Empty description="暂无历史任务，去生图工作台创建吧" />
       ) : (
-        gallery.map((item: any) => (
-          <Card
-            key={item.task_id}
-            title={`Lookbook · ${item.task_id.slice(0, 8)}`}
-            style={{ marginBottom: 24 }}
-            size="small"
-            extra={(
-              <Button type="link" icon={<EyeOutlined />} onClick={() => openMaterials(item)}>
-                查看素材
-              </Button>
-            )}
-          >
-            <SpaceRowMeta item={item} />
-            <Row gutter={[16, 16]} style={{ marginTop: 12 }}>
-              {item.images?.map((img: any, idx: number) => (
-                <Col span={6} key={img.id || idx}>
-                  <Image
-                    src={toContentUrl(img.path || '')}
-                    alt={img.angle}
-                    style={{ height: 200, objectFit: 'cover', borderRadius: 8 }}
-                    loading="lazy"
-                  />
-                  <div style={{ textAlign: 'center', marginTop: 4 }}>
-                    <Tag>{img.angle}</Tag>
-                    {img.status && (
-                      <Tag color={img.status === 'approved' ? 'success' : img.status === 'rejected' ? 'error' : 'default'}>
-                        {img.status === 'approved' ? '合格' : img.status === 'rejected' ? '不合格' : '待验收'}
-                      </Tag>
-                    )}
-                  </div>
-                </Col>
-              ))}
-            </Row>
-          </Card>
-        ))
+        <Collapse
+          accordion
+          items={collapseItems}
+          activeKey={expandedKeys[0]}
+          onChange={(key) => setExpandedKeys(key ? [String(key)] : [])}
+        />
       )}
 
       <Drawer
-        title={`关联素材 · ${activeItem?.task_id?.slice(0, 8) || ''}`}
-        width={520}
+        title={`素材与提示词 · ${activeItem?.task_id?.slice(0, 8) || ''}`}
+        width={560}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         destroyOnClose
       >
-        {renderSourceMaterials()}
+        <Text strong><FileTextOutlined /> 生图提示词</Text>
+        <div style={{ marginTop: 8, marginBottom: 8 }}>{renderPromptsSection()}</div>
+        {renderSeedreamPlan()}
+        <Divider />
+        <Text strong>关联素材</Text>
+        <div style={{ marginTop: 8 }}>{renderSourceMaterials()}</div>
       </Drawer>
     </div>
   );
 };
-
-const SpaceRowMeta: React.FC<{ item: any }> = ({ item }) => (
-  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-    {item.size && <Tag>{item.size}</Tag>}
-    {item.created_at && <Tag color="default">{new Date(item.created_at).toLocaleString()}</Tag>}
-    {item.source_materials?.model && <Tag color="blue">含模特素材</Tag>}
-    {item.source_materials?.clothing?.length > 0 && (
-      <Tag color="purple">{item.source_materials.clothing.length} 件服装</Tag>
-    )}
-  </div>
-);
 
 export default Gallery;

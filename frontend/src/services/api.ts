@@ -32,12 +32,21 @@ export const generateLookbook = (data: {
 }) => api.post('/api/lookbook/generate', data);
 export const getTasks = (status?: string) => api.get('/api/lookbook/tasks', { params: { status } });
 export const getTask = (id: string) => api.get(`/api/lookbook/tasks/${id}`);
-export const getGallery = () => api.get('/api/lookbook/gallery');
+export type GalleryFilters = {
+  task_id?: string;
+  model_id?: string;
+  clothing_id?: string;
+  reference_id?: string;
+};
+
+export const getGallery = (filters?: GalleryFilters) =>
+  api.get('/api/lookbook/gallery', { params: filters || {} });
 
 // Config API
 export const getConfig = () => api.get('/api/config');
 export const updateConfig = (data: any) => api.put('/api/config', data);
 export const testConfig = () => api.post('/api/config/test');
+export const testChatConfig = () => api.post('/api/config/test-chat');
 
 // 素材管理API
 export const listMaterials = (category?: string) => api.get('/api/materials', { params: { category } });

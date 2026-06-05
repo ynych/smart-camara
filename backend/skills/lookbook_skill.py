@@ -105,7 +105,12 @@ class LookbookSkill:
         reference_info = MaterialTool.get(reference_id) if reference_id else None
         style_hint = ""
         if reference_info:
-            style_hint = self._extract_style_from_filename(reference_info.get("name", ""))
+            ref_meta = reference_info.get("metadata", {}) or {}
+            style_hint = (
+                ref_meta.get("style")
+                or ref_meta.get("description")
+                or self._extract_style_from_filename(reference_info.get("name", ""))
+            )
 
         scene_info = MaterialTool.get(scene_id) if scene_id else None
         scene_desc = "电商Lookbook拍摄场景"
@@ -143,10 +148,10 @@ class LookbookSkill:
         scene_id: str = None,
         business_context: dict = None,
         acceptance_criteria: str = "",
-    ) -> tuple[list, str]:
+    ) -> tuple[list, str, str | None]:
         """
         构建提示词列表。优先调用大模型，失败则回退模板。
-        返回 (prompts, source) source 为 llm 或 template。
+        返回 (prompts, source, llm_error)。source 为 llm 或 template。
         """
         ctx = self._gather_prompt_context(
             model_id, clothing_ids, reference_id, scene_id,
@@ -155,7 +160,7 @@ class LookbookSkill:
         angle_templates = self._get_angle_templates(quantity)
 
         agent = PromptAgent()
-        llm_prompts = await agent.generate_prompts(
+        llm_prompts, llm_error = await agent.generate_prompts(
             model_desc=ctx["model_desc"],
             clothing_desc=ctx["clothing_desc"],
             scene_desc=ctx["scene_desc"],
@@ -169,7 +174,7 @@ class LookbookSkill:
         if llm_prompts:
             for p in llm_prompts:
                 p["prompt"] = self._apply_feedback_improvements(p["prompt"])
-            return llm_prompts, "llm"
+            return llm_prompts, "llm", None
 
         prompts = []
         for i, template in enumerate(angle_templates):
@@ -192,7 +197,7 @@ class LookbookSkill:
                 "editable": True,
                 "source": "template",
             })
-        return prompts, "template"
+        return prompts, "template", llm_error
 
     def build_prompts(
         self,
@@ -211,7 +216,7 @@ class LookbookSkill:
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 raise RuntimeError("use build_prompts_async in async context")
-            prompts, _ = loop.run_until_complete(
+            prompts, _, _ = loop.run_until_complete(
                 self.build_prompts_async(
                     model_id, clothing_ids, reference_id, quantity, size,
                     scene_id, business_context, acceptance_criteria,
@@ -330,6 +335,82 @@ class LookbookSkill:
     def _apply_feedback_improvements(self, prompt: str) -> str:
         feedbacks = self._recent_feedbacks()
         return self.prompt_optimizer.suggest_improvements(prompt, feedbacks)
+
+    def _build_seedream_reference_bundle(
+        self,
+        material_map: dict,
+        model_id: str,
+        clothing_ids: list,
+        reference_id: str = None,
+        scene_id: str = None,
+        max_clothing: int = 3,
+    ) -> tuple[list, str, list]:
+        """
+        按 Seedream 多图融合约定组装参考图：参考图优先，便于 prompt 用图1/图2指代。
+        返回 (file_paths, roles_prefix_for_prompt, slots_meta)
+        """
+        from tools.image_tool import ImageTool
+
+        slots: list[tuple[str, dict]] = []
+        if reference_id:
+            item = material_map.get(reference_id)
+            if item:
+                slots.append(("Lookbook风格与构图参考", item))
+        if model_id:
+            item = material_map.get(model_id)
+            if item:
+                slots.append(("模特身份与体态", item))
+        for idx, cid in enumerate(clothing_ids or []):
+            if idx >= max_clothing:
+                break
+            item = material_map.get(cid)
+            if item:
+                slots.append((f"服装款式与颜色（服装{idx + 1}）", item))
+        if scene_id:
+            item = material_map.get(scene_id)
+            if item:
+                slots.append(("场景与背景氛围", item))
+
+        paths: list[str] = []
+        role_parts: list[str] = []
+        slots_meta: list[dict] = []
+        for i, (role, item) in enumerate(slots, start=1):
+            raw_path = item.get("file_path") or ""
+            resolved = ImageTool.resolve_image_path(raw_path)
+            slots_meta.append({
+                "index": i,
+                "role": role,
+                "material_id": item.get("id"),
+                "name": item.get("name"),
+                "file_path": raw_path,
+                "resolved": bool(resolved),
+            })
+            if resolved and resolved not in paths:
+                paths.append(resolved)
+                role_parts.append(f"图{i}为{role}")
+            else:
+                print(f"[LookbookSkill] 参考图未就绪: {role} path={raw_path}")
+
+        if len(clothing_ids or []) > max_clothing:
+            role_parts.append(
+                f"另有{len(clothing_ids) - max_clothing}件服装仅通过文字描述体现"
+            )
+
+        prefix = ""
+        if role_parts:
+            prefix = (
+                "【多图融合说明】" + "；".join(role_parts)
+                + "。请严格按各图分工生成，尤其保持图1的Lookbook风格与构图。"
+            )
+        return paths, prefix, slots_meta
+
+    @staticmethod
+    def _prepend_image_roles(prompt: str, roles_prefix: str) -> str:
+        if not roles_prefix:
+            return prompt
+        if roles_prefix in prompt:
+            return prompt
+        return f"{roles_prefix}\n{prompt}"
 
     def _extract_style_from_filename(self, filename: str) -> str:
         """从文件名中提取风格提示"""
@@ -509,11 +590,13 @@ class LookbookSkill:
             material_ids.append(scene_id)
         materials = MaterialTool.get_by_ids(material_ids)
         material_map = {m["id"]: m for m in materials}
-        reference_images = []
-        for mid in material_ids:
-            item = material_map.get(mid)
-            if item and item.get("file_path") and item["file_path"] not in reference_images:
-                reference_images.append(item["file_path"])
+        reference_images, image_roles_prefix, image_slots = self._build_seedream_reference_bundle(
+            material_map, model_id, clothing_ids, reference_id, scene_id,
+        )
+        if reference_id and not any(s.get("material_id") == reference_id and s.get("resolved") for s in image_slots):
+            raise Exception(
+                "Lookbook 参考图文件无法读取，请检查素材是否在 content/lookbook参考 目录且路径有效"
+            )
 
         db = SessionLocal()
         try:
@@ -527,6 +610,7 @@ class LookbookSkill:
                         "reference_id": reference_id,
                         "scene_id": scene_id,
                         "business_context": business_context,
+                        "seedream_image_slots": image_slots,
                     },
                     ensure_ascii=False,
                 ),
@@ -563,6 +647,7 @@ class LookbookSkill:
                 angle_name = prompt_data.get("angle_name", f"图片{i + 1}") if isinstance(prompt_data, dict) else f"图片{i + 1}"
                 if not prompt:
                     continue
+                prompt = self._prepend_image_roles(prompt, image_roles_prefix)
                 image_content = await self.image_tool.generate(prompt, image_paths=reference_images, size=size)
                 file_path = self.file_tool.save_generated(task_id, image_content, i)
                 image_id = None

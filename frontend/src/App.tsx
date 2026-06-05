@@ -1,7 +1,7 @@
 import React from 'react';
 import { Layout, Menu, Typography } from 'antd';
 import { CameraOutlined, PictureOutlined, SettingOutlined, FolderOutlined } from '@ant-design/icons';
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import LookbookStudio from './pages/LookbookStudio';
 import Materials from './pages/Materials';
 import Gallery from './pages/Gallery';
@@ -14,7 +14,7 @@ const { Title } = Typography;
 const menuItems = [
   { key: '/materials', icon: <FolderOutlined />, label: '素材管理' },
   { key: '/studio', icon: <CameraOutlined />, label: '生图工作台' },
-  { key: '/gallery', icon: <PictureOutlined />, label: '我的相册' },
+  { key: '/history', icon: <PictureOutlined />, label: '历史任务' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ];
 
@@ -42,7 +42,8 @@ const AppContent: React.FC = () => {
           <Routes>
             <Route path="/studio" element={<LookbookStudio />} />
             <Route path="/materials" element={<Materials />} />
-            <Route path="/gallery" element={<Gallery />} />
+            <Route path="/history" element={<Gallery />} />
+            <Route path="/gallery" element={<Navigate to="/history" replace />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<LookbookStudio />} />
           </Routes>

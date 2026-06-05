@@ -1,7 +1,7 @@
 import base64
 import os
 import httpx
-from config import get_image_api_config
+from config import get_image_api_config, CONTENT_DIR, ASSETS_DIR
 
 class ImageTool:
     """生图API调用工具 - 支持文生图和图生图（含多图融合）"""
@@ -26,10 +26,32 @@ class ImageTool:
         return ImageTool.SIZE_MAP.get(normalized, ImageTool.SIZE_MAP["3:4"])
 
     @staticmethod
+    def resolve_image_path(image_path: str) -> str | None:
+        """解析素材/生成图路径（支持绝对路径、content 相对路径）。"""
+        if not image_path:
+            return None
+        raw = image_path.strip()
+        if os.path.isfile(raw):
+            return raw
+        candidates = [
+            os.path.join(CONTENT_DIR, raw),
+            os.path.join(ASSETS_DIR, raw),
+        ]
+        if not os.path.isabs(raw):
+            repo_root = os.path.dirname(CONTENT_DIR)
+            candidates.append(os.path.join(repo_root, raw.lstrip("/")))
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate):
+                return candidate
+        return None
+
+    @staticmethod
     def _image_to_base64(image_path: str) -> str:
         """将本地图片文件转为Base64编码（带data URI前缀）"""
-        if not image_path or not os.path.exists(image_path):
+        resolved = ImageTool.resolve_image_path(image_path)
+        if not resolved:
             return None
+        image_path = resolved
 
         # 获取文件扩展名确定MIME类型
         ext = os.path.splitext(image_path)[1].lower()
@@ -57,9 +79,9 @@ class ImageTool:
         if url.startswith("data:"):
             return url
         # 如果是本地路径，用文件转base64
-        if url.startswith("/") or url.startswith("./"):
+        if url.startswith("/") or url.startswith("./") or not url.startswith("http"):
             return ImageTool._image_to_base64(url)
-        # 如果是http URL，暂时返回None（需要异步下载，此处不处理）
+        # http(s) URL 原样传给 API
         return url
 
     @staticmethod
@@ -86,15 +108,21 @@ class ImageTool:
             "response_format": "url",
             "watermark": False,
             "stream": False,
+            "sequential_image_generation": "disabled",
         }
 
         # 如果有参考图，转为Base64后添加image参数
         if image_paths:
             b64_images = []
+            skipped = []
             for path in image_paths:
                 b64 = ImageTool._url_to_base64(path)
                 if b64:
                     b64_images.append(b64)
+                else:
+                    skipped.append(path)
+            if skipped:
+                print(f"[ImageTool] 跳过无法读取的参考图: {skipped[:3]}")
 
             if b64_images:
                 if len(b64_images) == 1:

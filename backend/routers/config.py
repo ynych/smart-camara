@@ -41,7 +41,7 @@ def update_config(data: dict):
             config = ApiConfig(provider=provider)
             db.add(config)
 
-        if "api_key" in data:
+        if data.get("api_key"):
             config.api_key = data["api_key"]
         if "endpoint" in data:
             config.endpoint = data["endpoint"]
@@ -60,3 +60,10 @@ async def test_config():
     """测试API连接"""
     result = await ImageTool.test_connection()
     return result
+
+
+@router.post("/test-chat")
+async def test_chat_config():
+    """测试对话模型（提示词 LLM）配置"""
+    from agents.prompt_agent import probe_chat_config
+    return await probe_chat_config()
