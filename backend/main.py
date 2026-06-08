@@ -5,7 +5,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from database import engine, Base
 from config import init_default_data, ASSETS_DIR, CONTENT_DIR
-from routers import lookbook, config, materials
+from routers.admin import (
+    agents_router,
+    chat_sessions_router,
+    golden_cases_router,
+    golden_runs_router,
+    harness_testcases_router,
+    agent_runs_router,
+    knowledge_nodes_router,
+    knowledge_trees_router,
+    pipeline_configs_router,
+    prompt_packs_router,
+    testcases_router,
+    tool_defs_router,
+)
+from routers import lookbook, config, materials, harness, agent_runtime, harness_runtime, pipeline_versions, health
 
 # 加载 .env 文件
 from pathlib import Path
@@ -21,6 +35,8 @@ async def lifespan(app: FastAPI):
     migrate_db()
     init_default_data()
     _backfill_materials()
+    from services.seed_admin_data import seed_admin_data
+    seed_admin_data()
     yield
 
 def _backfill_materials():
@@ -52,6 +68,15 @@ def migrate_db():
         ("lookbook_tasks", "prompt_overrides", "TEXT"),
         ("requirements", "reference_image_path", "VARCHAR(500)"),
         ("requirements", "prompt_overrides", "TEXT"),
+        ("lookbook_tasks", "generation_round", "INTEGER DEFAULT 1"),
+        ("generated_images", "generation_round", "INTEGER DEFAULT 1"),
+        ("generated_images", "parent_image_id", "VARCHAR(36)"),
+        ("generated_images", "prompt_modules_json", "TEXT"),
+        ("agent_chat_sessions", "last_run_id", "VARCHAR(36)"),
+        ("harness_test_cases", "last_run_id", "VARCHAR(36)"),
+        ("harness_test_cases", "source_image_id", "VARCHAR(36)"),
+        ("harness_test_cases", "source_evaluation_id", "VARCHAR(36)"),
+        ("harness_test_cases", "human_eval_json", "TEXT"),
     ]
     for table, column, col_type in migrations:
         try:
@@ -79,6 +104,25 @@ app.add_middleware(
 app.include_router(lookbook.router)
 app.include_router(config.router)
 app.include_router(materials.router)
+app.include_router(harness.router)
+app.include_router(harness.eval_router)
+app.include_router(harness.image_router)
+app.include_router(agents_router)
+app.include_router(testcases_router)
+app.include_router(knowledge_trees_router)
+app.include_router(knowledge_nodes_router)
+app.include_router(prompt_packs_router)
+app.include_router(pipeline_configs_router)
+app.include_router(tool_defs_router)
+app.include_router(golden_cases_router)
+app.include_router(golden_runs_router)
+app.include_router(chat_sessions_router)
+app.include_router(harness_testcases_router)
+app.include_router(agent_runs_router)
+app.include_router(agent_runtime.router)
+app.include_router(harness_runtime.router)
+app.include_router(pipeline_versions.router)
+app.include_router(health.router)
 
 # 静态文件
 os.makedirs(ASSETS_DIR, exist_ok=True)
@@ -93,5 +137,5 @@ async def root():
     return {"message": "私人摄影团队 MVP API", "version": "1.0.0", "docs": "/docs"}
 
 @app.get("/health")
-async def health():
+async def health_legacy():
     return {"status": "healthy"}

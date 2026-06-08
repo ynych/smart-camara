@@ -3,7 +3,26 @@ import os
 import httpx
 from config import get_chat_api_config
 
+RESPONSES_URL = "https://ark.cn-beijing.volces.com/api/v3/responses"
 CHAT_COMPLETIONS_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+
+ARK_APP_ID_HINT = (
+    "VOLCANO_CHAT_ENDPOINT 不能填 ark- 应用 ID。"
+    "请打开火山方舟控制台 → 在线推理 → 创建接入点 → 选择豆包对话模型（如 Doubao-1.5-pro），"
+    "复制 ep- 开头的接入点 ID 到设置页或 .env。"
+)
+
+
+def validate_chat_endpoint_id(endpoint: str) -> str | None:
+    """保存/调用前校验；返回错误文案或 None。"""
+    ep = (endpoint or "").strip()
+    if not ep:
+        return "未配置对话接入点 VOLCANO_CHAT_ENDPOINT"
+    if ep.startswith("ark-"):
+        return ARK_APP_ID_HINT
+    if ep.startswith("ep-") and "seedream" in ep.lower():
+        return "该 ep 疑似 Seedream 生图接入点，请另建豆包对话接入点"
+    return None
 
 
 def _parse_ark_error(response: httpx.Response, model_id: str = "") -> str:
@@ -67,6 +86,66 @@ def _fallback_model_ids(primary: str) -> list[str]:
     return ordered
 
 
+def _messages_to_responses_input(messages: list) -> list:
+    """OpenAI messages → Ark /responses input。"""
+    items = []
+    for m in messages:
+        role = m.get("role") or "user"
+        content = m.get("content", "")
+        if isinstance(content, str):
+            blocks = [{"type": "input_text", "text": content}]
+        elif isinstance(content, list):
+            blocks = content
+        else:
+            blocks = [{"type": "input_text", "text": str(content)}]
+        items.append({"role": role, "content": blocks})
+    return items
+
+
+def extract_responses_text(body: dict) -> str:
+    """从 /responses 响应体提取 assistant 文本。"""
+    parts: list[str] = []
+    for item in body.get("output") or []:
+        if item.get("type") != "message":
+            continue
+        for block in item.get("content") or []:
+            if block.get("type") == "output_text" and block.get("text"):
+                parts.append(block["text"])
+    if parts:
+        return "".join(parts).strip()
+    # chat/completions 兼容
+    choices = body.get("choices") or []
+    if choices:
+        msg = choices[0].get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str):
+            return content.strip()
+    return ""
+
+
+async def _responses_call(
+    client: httpx.AsyncClient,
+    api_key: str,
+    model: str,
+    messages: list,
+    *,
+    max_tokens: int = 4096,
+) -> httpx.Response:
+    payload: dict = {
+        "model": model,
+        "input": _messages_to_responses_input(messages),
+        "max_output_tokens": max_tokens,
+    }
+    return await client.post(
+        RESPONSES_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+    )
+
+
 async def _chat_completion(
     client: httpx.AsyncClient,
     api_key: str,
@@ -91,6 +170,10 @@ async def _chat_completion(
     )
 
 
+def _chat_api_mode() -> str:
+    return (os.environ.get("VOLCANO_CHAT_API_MODE") or "responses").strip().lower()
+
+
 async def call_ark_chat(
     api_key: str,
     model: str,
@@ -98,23 +181,33 @@ async def call_ark_chat(
     *,
     max_tokens: int = 4096,
     temperature: float = 0.7,
-) -> tuple[httpx.Response | None, str | None]:
+) -> tuple[dict | None, str | None]:
     """
-    仅使用标准 /chat/completions（OpenAI 兼容）。
-    对多个 model/endpoint 依次尝试，返回首个 200 响应或最后一次失败原因。
+    调用豆包对话：默认 /api/v3/responses（Doubao-2.0 等）；
+    VOLCANO_CHAT_API_MODE=chat_completions 时走旧接口。
+    返回 (parsed_json_body, error)。
     """
+    mode = _chat_api_mode()
     errors: list[str] = []
-    async with httpx.AsyncClient(timeout=90.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         for mid in _fallback_model_ids(model):
-            response = await _chat_completion(
-                client, api_key, mid, messages,
-                max_tokens=max_tokens, temperature=temperature,
-            )
+            if mode == "chat_completions":
+                response = await _chat_completion(
+                    client, api_key, mid, messages,
+                    max_tokens=max_tokens, temperature=temperature,
+                )
+            else:
+                response = await _responses_call(
+                    client, api_key, mid, messages, max_tokens=max_tokens,
+                )
             if response.status_code == 200:
-                return response, None
+                try:
+                    return response.json(), None
+                except Exception as e:
+                    return None, f"解析响应 JSON 失败: {e}"
             err = _parse_ark_error(response, mid)
             errors.append(f"[{mid[:24]}…] {err}" if len(mid) > 24 else f"[{mid}] {err}")
-            print(f"[PromptAgent] 尝试 {mid[:40]} 失败: {err}")
+            print(f"[PromptAgent] 尝试 {mid[:40]} ({mode}) 失败: {err}")
 
     summary = errors[0] if len(errors) == 1 else "；".join(errors[:2])
     if len(errors) > 2:
@@ -144,6 +237,9 @@ class PromptAgent:
         config = get_chat_api_config()
         endpoint = (config.get("endpoint") or "").strip()
         api_key = (config.get("api_key") or "").strip()
+        bad = validate_chat_endpoint_id(endpoint)
+        if bad:
+            return None, bad
         if not endpoint or not api_key:
             return None, (
                 "未配置对话模型：请在 .env 设置 VOLCANO_CHAT_ENDPOINT（推荐 ep- 对话接入点），"
@@ -188,13 +284,13 @@ class PromptAgent:
         ]
 
         try:
-            response, err = await call_ark_chat(
+            body, err = await call_ark_chat(
                 api_key, endpoint, messages, max_tokens=4096, temperature=0.7,
             )
-            if not response:
+            if not body:
                 return None, err
 
-            content = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            content = extract_responses_text(body)
             prompts = self._parse_json_array(content)
             if not prompts:
                 return None, "大模型返回内容无法解析为 JSON 提示词数组，请重试或检查模型输出格式。"
@@ -241,28 +337,34 @@ async def probe_chat_config() -> dict:
     config = get_chat_api_config()
     endpoint = (config.get("endpoint") or "").strip()
     api_key = (config.get("api_key") or "").strip()
+    bad = validate_chat_endpoint_id(endpoint)
+    if bad:
+        return {"configured": bool(endpoint), "success": False, "endpoint": endpoint[:32], "error": bad}
     if not endpoint:
         return {"configured": False, "success": False, "error": "未配置 VOLCANO_CHAT_ENDPOINT"}
     if not api_key:
         return {"configured": False, "success": False, "error": "未配置 API Key（VOLCANO_API_KEY）"}
 
-    response, err = await call_ark_chat(
+    mode = _chat_api_mode()
+    body, err = await call_ark_chat(
         api_key, endpoint,
-        [{"role": "user", "content": "回复OK"}],
-        max_tokens=8,
+        [{"role": "user", "content": "只回复OK"}],
+        max_tokens=64,
         temperature=0,
     )
-    if response:
+    if body:
+        text = extract_responses_text(body)
         return {
             "configured": True,
             "success": True,
             "endpoint": endpoint[:32] + ("…" if len(endpoint) > 32 else ""),
-            "api_mode": "chat/completions",
+            "api_mode": mode,
+            "sample": (text or "")[:32],
         }
     return {
         "configured": True,
         "success": False,
         "endpoint": endpoint[:32] + ("…" if len(endpoint) > 32 else ""),
-        "api_mode": "chat/completions",
+        "api_mode": mode,
         "error": err,
     }

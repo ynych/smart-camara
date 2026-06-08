@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>私人摄影团队 MVP — 目标架构（简版）</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #fff; color: #1e293b; }
+    header { padding: 14px 20px; border-bottom: 1px solid #e2e8f0; }
+    header h1 { font-size: 1.15rem; }
+    header p { font-size: 0.82rem; color: #64748b; margin-top: 3px; }
+    #wrap { overflow: auto; height: calc(100vh - 58px); }
+    svg { display: block; min-width: 1060px; min-height: 680px; }
+    .node { cursor: pointer; }
+    .node.dimmed { opacity: 0.2; }
+    .node.highlight rect { stroke-width: 3; filter: drop-shadow(0 2px 8px rgba(0,0,0,.12)); }
+    .edge { fill: none; stroke: #94a3b8; stroke-width: 2; marker-end: url(#arrow); transition: opacity .15s; }
+    .edge.dimmed { opacity: 0.06; }
+    .edge.highlight { stroke: #0f172a; stroke-width: 2.5; marker-end: url(#arrow-hl); }
+    .edge.evolve { stroke: #7c3aed; stroke-width: 2.2; marker-end: url(#arrow-purple); stroke-dasharray: none; }
+    .edge.feedback { stroke: #ea580c; stroke-width: 2; marker-end: url(#arrow-orange); stroke-dasharray: 6 4; }
+    .edge-label { font-size: 11px; fill: #64748b; pointer-events: none; }
+    .panel-title { font-size: 13px; font-weight: 700; }
+    .panel-sub { font-size: 10px; fill: #64748b; }
+    .step-num { font-size: 11px; font-weight: 700; fill: #fff; }
+    .legend {
+      position: fixed; bottom: 16px; right: 16px; background: #fff;
+      border: 2px solid #cbd5e1; border-radius: 10px; padding: 12px 14px;
+      font-size: 11px; max-width: 220px; box-shadow: 0 4px 16px rgba(0,0,0,.06);
+    }
+    .legend h3 { font-size: 12px; margin-bottom: 8px; }
+    .lg { display: flex; gap: 8px; align-items: center; margin: 5px 0; }
+    .dot { width: 14px; height: 10px; border-radius: 2px; border: 2px solid #334155; }
+    .dot.blue { background: #dbeafe; border-color: #2563eb; }
+    .dot.green { background: #dcfce7; border-color: #16a34a; }
+    .dot.orange { background: #ffedd5; border-color: #ea580c; }
+    .hint { position: fixed; bottom: 16px; left: 16px; font-size: 11px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>目标架构 — 用户域 × Agent 域（Harness 自进化）</h1>
+    <p>用户域交付价值与体验 · Agent 域通过模块化 Harness 持续进化 · 人工门控进化方向</p>
+  </header>
+
+  <div id="wrap">
+    <svg viewBox="0 0 1060 680" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="sketch" x="-4%" y="-4%" width="108%" height="108%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="3" result="n"/>
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="2.2"/>
+        </filter>
+        <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#94a3b8"/></marker>
+        <marker id="arrow-hl" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#0f172a"/></marker>
+        <marker id="arrow-purple" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#7c3aed"/></marker>
+        <marker id="arrow-orange" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#ea580c"/></marker>
+        <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+          <path d="M20 0 L0 0 0 20" fill="none" stroke="#f1f5f9" stroke-width="1"/>
+        </pattern>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#grid)"/>
+
+      <!-- 网关层 -->
+      <rect x="24" y="24" width="1012" height="88" rx="12" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" stroke-dasharray="5 3"/>
+      <text x="40" y="44" font-size="10" font-weight="700" fill="#64748b" letter-spacing=".06em">网关层</text>
+
+      <g class="node" data-id="user-ui" transform="translate(48,52)">
+        <rect width="130" height="44" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2" filter="url(#sketch)"/>
+        <text x="65" y="27" text-anchor="middle" font-size="12" font-weight="700">用户平台 UI</text>
+      </g>
+      <g class="node" data-id="admin-ui" transform="translate(200,52)">
+        <rect width="130" height="44" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2" filter="url(#sketch)"/>
+        <text x="65" y="27" text-anchor="middle" font-size="12" font-weight="700">Agent 平台 UI</text>
+      </g>
+      <g class="node" data-id="api" transform="translate(420,48)">
+        <rect width="200" height="52" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="2" filter="url(#sketch)"/>
+        <text x="100" y="22" text-anchor="middle" font-size="13" font-weight="700">FastAPI</text>
+        <text x="100" y="38" text-anchor="middle" font-size="10" fill="#475569">统一 API · 8155</text>
+      </g>
+
+      <!-- ═══ 用户域 ═══ -->
+      <rect x="24" y="128" width="500" height="420" rx="14" fill="#f0fdf4" stroke="#86efac" stroke-width="2"/>
+      <text x="44" y="152" class="panel-title" fill="#15803d">用户域 — 用户价值 &amp; 体验</text>
+      <text x="44" y="168" class="panel-sub">目标：让商家/摄影师「选片 → 出图 → 验收」顺畅，产出可进化的反馈信号</text>
+
+      <!-- 用户旅程 5 步 -->
+      <g id="user-nodes">
+        <g class="node" data-id="u1" transform="translate(48,188)">
+          <circle cx="14" cy="14" r="14" fill="#16a34a"/><text class="step-num" x="14" y="18" text-anchor="middle">1</text>
+          <rect x="36" y="0" width="420" height="48" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2" filter="url(#sketch)"/>
+          <text x="52" y="20" font-size="12" font-weight="700">上传 &amp; 管理素材</text>
+          <text x="52" y="36" font-size="10" fill="#475569">价值：素材一次入库，按模特/套装/参考分组 · 体验：扫描即得、缩略图预览</text>
+        </g>
+        <g class="node" data-id="u2" transform="translate(48,252)">
+          <circle cx="14" cy="14" r="14" fill="#16a34a"/><text class="step-num" x="14" y="18" text-anchor="middle">2</text>
+          <rect x="36" y="0" width="420" height="48" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2" filter="url(#sketch)"/>
+          <text x="52" y="20" font-size="12" font-weight="700">工作台选片 + 填需求</text>
+          <text x="52" y="36" font-size="10" fill="#475569">价值：业务上下文进 Agent · 体验：5 步向导、实时预览所选素材</text>
+        </g>
+        <g class="node" data-id="u3" transform="translate(48,316)">
+          <circle cx="14" cy="14" r="14" fill="#16a34a"/><text class="step-num" x="14" y="18" text-anchor="middle">3</text>
+          <rect x="36" y="0" width="420" height="48" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2" filter="url(#sketch)"/>
+          <text x="52" y="20" font-size="12" font-weight="700">预览 &amp; 编辑提示词</text>
+          <text x="52" y="36" font-size="10" fill="#475569">价值：消费已发布 Agent · 体验：多角度 prompt 可改、带来源 trace</text>
+        </g>
+        <g class="node" data-id="u4" transform="translate(48,380)">
+          <circle cx="14" cy="14" r="14" fill="#16a34a"/><text class="step-num" x="14" y="18" text-anchor="middle">4</text>
+          <rect x="36" y="0" width="420" height="48" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2" filter="url(#sketch)"/>
+          <text x="52" y="20" font-size="12" font-weight="700">Seedream 生图</text>
+          <text x="52" y="36" font-size="10" fill="#475569">价值：Lookbook 交付物 · 体验：进度可见、尺寸可选、相册归档</text>
+        </g>
+        <g class="node" data-id="u5" transform="translate(48,444)">
+          <circle cx="14" cy="14" r="14" fill="#16a34a"/><text class="step-num" x="14" y="18" text-anchor="middle">5</text>
+          <rect x="36" y="0" width="420" height="48" rx="8" fill="#bbf7d0" stroke="#15803d" stroke-width="2.5" filter="url(#sketch)"/>
+          <text x="52" y="20" font-size="12" font-weight="700">专家评价 → 反馈信号</text>
+          <text x="52" y="36" font-size="10" fill="#475569">价值：ground truth 驱动 Agent 进化 · 体验：结构化评分/问题/建议、可重生</text>
+        </g>
+      </g>
+      <!-- 用户域价值摘要 -->
+      <rect x="48" y="508" width="452" height="28" rx="6" fill="#fff" stroke="#86efac"/>
+      <text x="274" y="527" text-anchor="middle" font-size="10" fill="#15803d" font-weight="600">用户感知：更快出合格 Lookbook · 过程可控 · 不满意可评可改</text>
+
+      <!-- ═══ Agent 域 ═══ -->
+      <rect x="536" y="128" width="500" height="420" rx="14" fill="#f0fdf4" stroke="#86efac" stroke-width="2"/>
+      <text x="556" y="152" class="panel-title" fill="#15803d">Agent 域 — Harness Engineering &amp; 自进化</text>
+      <text x="556" y="168" class="panel-sub">目标：提示词 Agent 随真实反馈变好 · 进化有模块粒度、有评测、有人工方向控制</text>
+
+      <!-- 运行时（小） -->
+      <g class="node" data-id="runtime" transform="translate(556,182)">
+        <rect width="460" height="56" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2" filter="url(#sketch)"/>
+        <text x="230" y="22" text-anchor="middle" font-size="12" font-weight="700">运行时：LangGraph → Tools(B*) → Pipeline(A*) → LLM(C1)</text>
+        <text x="230" y="40" text-anchor="middle" font-size="10" fill="#475569">输入固定 · 输出 prompts[] · 只读 published 配置</text>
+      </g>
+
+      <!-- 自进化飞轮 6 步 -->
+      <text x="556" y="262" font-size="11" font-weight="700" fill="#7c3aed">⟳ 自进化闭环（Harness Flywheel）</text>
+
+      <g id="agent-nodes">
+        <g class="node" data-id="a1" transform="translate(556,272)">
+          <rect width="138" height="52" rx="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="2" filter="url(#sketch)"/>
+          <text x="69" y="22" text-anchor="middle" font-size="11" font-weight="700">① 采样 Sample</text>
+          <text x="69" y="38" text-anchor="middle" font-size="9" fill="#475569">人评导入 TestCase</text>
+        </g>
+        <g class="node" data-id="a2" transform="translate(710,272)">
+          <rect width="138" height="52" rx="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="2" filter="url(#sketch)"/>
+          <text x="69" y="22" text-anchor="middle" font-size="11" font-weight="700">② 运行 Run</text>
+          <text x="69" y="38" text-anchor="middle" font-size="9" fill="#475569">Agent 产出 prompts</text>
+        </g>
+        <g class="node" data-id="a3" transform="translate(864,272)">
+          <rect width="152" height="52" rx="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="2" filter="url(#sketch)"/>
+          <text x="76" y="22" text-anchor="middle" font-size="11" font-weight="700">③ 评测 Eval</text>
+          <text x="76" y="38" text-anchor="middle" font-size="9" fill="#475569">文本 Judge ∥ 人评 各半</text>
+        </g>
+        <g class="node" data-id="a4" transform="translate(556,348)">
+          <rect width="138" height="52" rx="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="2" filter="url(#sketch)"/>
+          <text x="69" y="22" text-anchor="middle" font-size="11" font-weight="700">④ 提案 Propose</text>
+          <text x="69" y="38" text-anchor="middle" font-size="9" fill="#475569">改模块 → draft</text>
+        </g>
+        <g class="node" data-id="a5" transform="translate(710,348)">
+          <rect width="138" height="52" rx="8" fill="#ede9fe" stroke="#7c3aed" stroke-width="2" filter="url(#sketch)"/>
+          <text x="69" y="22" text-anchor="middle" font-size="11" font-weight="700">⑤ 对比 Compare</text>
+          <text x="69" y="38" text-anchor="middle" font-size="9" fill="#475569">published vs draft</text>
+        </g>
+        <g class="node" data-id="a6" transform="translate(864,348)">
+          <rect width="152" height="52" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="2.5" filter="url(#sketch)"/>
+          <text x="76" y="22" text-anchor="middle" font-size="11" font-weight="700">⑥ 发布 Publish</text>
+          <text x="76" y="38" text-anchor="middle" font-size="9" fill="#475569">人工批准 → 用户可见</text>
+        </g>
+      </g>
+
+      <!-- 进化方向控制 -->
+      <rect x="556" y="418" width="460" height="118" rx="10" fill="#fff" stroke="#d97706" stroke-width="2" filter="url(#sketch)"/>
+      <text x="570" y="438" font-size="11" font-weight="700" fill="#b45309">🎯 如何控制进化方向（三道门）</text>
+      <text x="570" y="458" font-size="10" fill="#475569">① <tspan font-weight="600">信号门</tspan> — 只认两类反馈：高级摄影师人评（ground truth）+ 验收标准驱动的文本 Judge（E1/E2）</text>
+      <text x="570" y="476" font-size="10" fill="#475569">② <tspan font-weight="600">粒度门</tspan> — 只改 Harness 模块 A1–E2（模板/Tool/知识/Judge），禁止整包 prompt 黑盒替换</text>
+      <text x="570" y="494" font-size="10" fill="#475569">③ <tspan font-weight="600">审批门</tspan> — 自动优化只写 draft；Compare 双轨不降才允许 Publish；用户平台永远读 published</text>
+      <text x="570" y="518" font-size="10" fill="#64748b">进化触发示例：人评「服装颜色偏了」→ 归因 A3/B2 → 改 template draft → Compare → 摄影指导 Approve</text>
+
+      <!-- 基础设施 -->
+      <rect x="24" y="568" width="1012" height="88" rx="12" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5" stroke-dasharray="5 3"/>
+      <text x="40" y="588" font-size="10" font-weight="700" fill="#64748b" letter-spacing=".06em">基础设施层</text>
+
+      <g class="node" data-id="sqlite" transform="translate(48,598)">
+        <rect width="180" height="44" rx="8" fill="#ffedd5" stroke="#ea580c" stroke-width="2" filter="url(#sketch)"/>
+        <text x="90" y="27" text-anchor="middle" font-size="12" font-weight="700">SQLite · 评价 &amp; 配置</text>
+      </g>
+      <g class="node" data-id="volcano" transform="translate(260,598)">
+        <rect width="200" height="44" rx="8" fill="#ffedd5" stroke="#ea580c" stroke-width="2" filter="url(#sketch)"/>
+        <text x="100" y="27" text-anchor="middle" font-size="12" font-weight="700">火山 API · LLM + Seedream</text>
+      </g>
+      <g class="node" data-id="files" transform="translate(492,598)">
+        <rect width="160" height="44" rx="8" fill="#ffedd5" stroke="#ea580c" stroke-width="2" filter="url(#sketch)"/>
+        <text x="80" y="27" text-anchor="middle" font-size="12" font-weight="700">本地素材 / 成图</text>
+      </g>
+      <g class="node" data-id="promptfoo" transform="translate(684,598)">
+        <rect width="160" height="44" rx="8" fill="#ffedd5" stroke="#ea580c" stroke-width="2" filter="url(#sketch)"/>
+        <text x="80" y="27" text-anchor="middle" font-size="12" font-weight="700">Promptfoo · 文本回归</text>
+      </g>
+
+      <!-- ═══ 连线 ═══ -->
+      <g id="edges">
+        <!-- 网关 -->
+        <path class="edge" data-from="user-ui" data-to="api" d="M 178,74 L 420,74"/>
+        <path class="edge" data-from="admin-ui" data-to="api" d="M 330,74 L 420,74"/>
+
+        <!-- 用户旅程 -->
+        <path class="edge" data-from="u1" data-to="u2" d="M 274,236 L 274,252"/>
+        <path class="edge" data-from="u2" data-to="u3" d="M 274,300 L 274,316"/>
+        <path class="edge" data-from="u3" data-to="u4" d="M 274,364 L 274,380"/>
+        <path class="edge" data-from="u4" data-to="u5" d="M 274,428 L 274,444"/>
+
+        <!-- 用户 ↔ Agent -->
+        <path class="edge" data-from="u3" data-to="runtime" d="M 468,340 L 556,210"/>
+        <text class="edge-label" x="490" y="268">调用 published Agent</text>
+        <path class="edge feedback" data-from="u5" data-to="a1" d="M 504,468 L 556,298"/>
+        <text class="edge-label" x="512" y="390" fill="#ea580c">反馈信号 export</text>
+        <path class="edge" data-from="a6" data-to="u3" d="M 940,400 L 940,560 L 24,560 L 24,340 L 48,340" stroke-dasharray="5 4"/>
+        <text class="edge-label" x="480" y="555">Publish 后用户平台自动用新版</text>
+
+        <!-- 进化飞轮 -->
+        <path class="edge evolve" data-from="a1" data-to="a2" d="M 694,298 L 710,298"/>
+        <path class="edge evolve" data-from="a2" data-to="a3" d="M 848,298 L 864,298"/>
+        <path class="edge evolve" data-from="a3" data-to="a4" d="M 940,324 L 940,332 L 625,332 L 625,348"/>
+        <path class="edge evolve" data-from="a4" data-to="a5" d="M 694,374 L 710,374"/>
+        <path class="edge evolve" data-from="a5" data-to="a6" d="M 848,374 L 864,374"/>
+        <path class="edge evolve" data-from="a6" data-to="runtime" d="M 940,348 L 940,260 L 1016,260 L 1016,210"/>
+        <path class="edge evolve" data-from="runtime" data-from2="a2" data-to="a2" d="M 786,238 L 779,272"/>
+
+        <!-- 基础设施 -->
+        <path class="edge" data-from="u4" data-to="volcano" d="M 274,492 L 360,598"/>
+        <path class="edge" data-from="u5" data-to="sqlite" d="M 200,492 L 138,598"/>
+        <path class="edge" data-from="a3" data-to="promptfoo" d="M 940,324 L 940,560 L 764,620"/>
+        <path class="edge" data-from="runtime" data-to="volcano" d="M 700,238 L 360,598"/>
+      </g>
+    </svg>
+  </div>
+
+  <div class="legend">
+    <h3>图例</h3>
+    <div class="lg"><span class="dot blue"></span> 网关层</div>
+    <div class="lg"><span class="dot green"></span> 业务层（用户域 / Agent 域）</div>
+    <div class="lg"><span class="dot orange"></span> 基础设施</div>
+    <div style="margin-top:8px;color:#7c3aed">— 紫色箭头 = 自进化闭环</div>
+    <div style="color:#ea580c">— 橙色虚线 = 用户反馈信号</div>
+  </div>
+  <div class="hint">悬停节点高亮相关连接</div>
+
+  <script>
+    const edges = document.querySelectorAll('.edge');
+    const nodes = document.querySelectorAll('.node');
+    function related(id) {
+      const s = new Set([id]);
+      edges.forEach(e => {
+        if (e.dataset.from === id) s.add(e.dataset.to);
+        if (e.dataset.to === id) s.add(e.dataset.from);
+      });
+      return s;
+    }
+    function reset() {
+      nodes.forEach(n => n.classList.remove('dimmed','highlight'));
+      edges.forEach(e => e.classList.remove('dimmed','highlight'));
+    }
+    nodes.forEach(n => {
+      n.addEventListener('mouseenter', () => {
+        const r = related(n.dataset.id);
+        nodes.forEach(x => x.classList.toggle('highlight', r.has(x.dataset.id)));
+        nodes.forEach(x => x.classList.toggle('dimmed', !r.has(x.dataset.id)));
+        edges.forEach(e => {
+          const on = r.has(e.dataset.from) && r.has(e.dataset.to);
+          e.classList.toggle('highlight', on);
+          e.classList.toggle('dimmed', !on);
+        });
+      });
+      n.addEventListener('mouseleave', reset);
+    });
+  </script>
+</body>
+</html>

@@ -175,8 +175,13 @@ def get_styles(db: Session = Depends(get_db)):
     }
 
 @router.post("/generate-prompt")
-async def generate_prompt(data: dict):
-    """预生成 prompt 列表（优先大模型，失败回退模板）。"""
+async def generate_prompt(data: dict, db: Session = Depends(get_db)):
+    """预生成 prompt 列表（LangGraph Agent，失败回退 Harness）。"""
+    from data.services import AgentDefinitionService
+    from agents.graphs.lookbook_prompt_graph import run_prompt_agent
+    from services.seed_admin_data import BUILTIN_AGENT_SLUG
+    import json as _json
+
     model_id = data.get("model_id")
     clothing_ids = data.get("clothing_ids", [])
     reference_id = data.get("reference_id")
@@ -192,21 +197,51 @@ async def generate_prompt(data: dict):
             quantity=quantity,
             business_context=business_context,
         )
-        prompts, prompt_source, llm_error = await skill.build_prompts_async(
-            model_id,
-            clothing_ids,
-            reference_id,
-            quantity,
-            size=size,
-            scene_id=scene_id,
-            business_context=business_context,
-            acceptance_criteria=criteria,
+        agent_svc = AgentDefinitionService(db)
+        rows = agent_svc.list_all()
+        agent_row = next((r for r in rows if r.get("slug") == BUILTIN_AGENT_SLUG), rows[0] if rows else None)
+        if not agent_row:
+            prompts, prompt_source, llm_error = await skill.build_prompts_async(
+                model_id, clothing_ids, reference_id, quantity, size=size,
+                scene_id=scene_id, business_context=business_context, acceptance_criteria=criteria,
+            )
+            return {"prompts": prompts, "acceptance_criteria": criteria, "prompt_source": prompt_source, "llm_error": llm_error}
+
+        tool_ids = agent_row.get("tool_ids_json")
+        if isinstance(tool_ids, str):
+            tool_ids = _json.loads(tool_ids)
+        agent_config = {
+            "pipeline_config_id": agent_row.get("pipeline_config_id"),
+            "tool_ids": tool_ids or [],
+            "knowledge_tree_id": agent_row.get("knowledge_tree_id"),
+        }
+        inputs = {
+            "model_id": model_id,
+            "clothing_ids": clothing_ids,
+            "reference_id": reference_id,
+            "scene_id": scene_id,
+            "size": size,
+            "quantity": quantity,
+            "business_context": business_context,
+            "acceptance_criteria": criteria,
+        }
+        result = await run_prompt_agent(
+            inputs,
+            agent_config,
+            session_id=data.get("session_id") or data.get("langfuse_session_id"),
+            user_id="workbench",
+            ref_type="workbench",
         )
         return {
-            "prompts": prompts,
+            "prompts": result.get("prompts") or [],
             "acceptance_criteria": criteria,
-            "prompt_source": prompt_source,
-            "llm_error": llm_error,
+            "prompt_source": result.get("source"),
+            "agent_slug": agent_row.get("slug"),
+            "agent_id": agent_row.get("id"),
+            "llm_error": result.get("llm_error"),
+            "trace": result.get("trace"),
+            "run_id": result.get("run_id"),
+            "session_id": result.get("session_id"),
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -308,6 +343,8 @@ def _task_display_images(db: Session, task: LookbookTask) -> list:
                 "prompt": g.prompt,
                 "status": g.status,
                 "feedback": g.feedback,
+                "generation_round": g.generation_round or 1,
+                "parent_image_id": g.parent_image_id,
             }
             for g in rows
         ]

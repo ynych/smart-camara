@@ -26,10 +26,14 @@ import {
   SearchOutlined,
   ClearOutlined,
   FileTextOutlined,
+  FormOutlined,
+  ImportOutlined,
 } from '@ant-design/icons';
 import { getGallery, type GalleryFilters } from '../services/api';
+import { importHarnessFromEvaluation } from '../services/adminApi';
 import { toContentUrl } from '../utils/contentUrl';
 import { toMediaUrl, mediaPreview } from '../utils/mediaUrl';
+import ImageEvaluationModal from '../components/ImageEvaluationModal';
 
 const { Text, Paragraph } = Typography;
 
@@ -56,6 +60,10 @@ const Gallery: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeItem, setActiveItem] = useState<any>(null);
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
+  const [evalModal, setEvalModal] = useState<{ open: boolean; imageId: string; path?: string; angle?: string }>({
+    open: false,
+    imageId: '',
+  });
 
   const loadGallery = useCallback(async (applied?: GalleryFilters) => {
     setLoading(true);
@@ -247,10 +255,38 @@ const Gallery: React.FC = () => {
               />
               <div style={{ textAlign: 'center', marginTop: 4 }}>
                 <Tag>{img.angle}</Tag>
+                {img.generation_round > 1 && <Tag color="purple">R{img.generation_round}</Tag>}
                 {img.status && (
                   <Tag color={img.status === 'approved' ? 'success' : img.status === 'rejected' ? 'error' : 'default'}>
                     {img.status === 'approved' ? '合格' : img.status === 'rejected' ? '不合格' : '待验收'}
                   </Tag>
+                )}
+                {img.id && (
+                  <div style={{ marginTop: 4 }}>
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<FormOutlined />}
+                      onClick={() => setEvalModal({ open: true, imageId: img.id, path: img.path, angle: img.angle })}
+                    >
+                      评价
+                    </Button>
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<ImportOutlined />}
+                      onClick={async () => {
+                        try {
+                          await importHarnessFromEvaluation(img.id);
+                          message.success('已导入 Harness TestCase');
+                        } catch (e: any) {
+                          message.error(e?.response?.data?.detail || '导入失败');
+                        }
+                      }}
+                    >
+                      导入 TestCase
+                    </Button>
+                  </div>
                 )}
               </div>
             </Col>
@@ -374,6 +410,15 @@ const Gallery: React.FC = () => {
         <Text strong>关联素材</Text>
         <div style={{ marginTop: 8 }}>{renderSourceMaterials()}</div>
       </Drawer>
+
+      <ImageEvaluationModal
+        open={evalModal.open}
+        imageId={evalModal.imageId}
+        imagePath={evalModal.path}
+        angle={evalModal.angle}
+        onClose={() => setEvalModal({ open: false, imageId: '' })}
+        onRegenerated={() => loadGallery(filters)}
+      />
     </div>
   );
 };

@@ -1,0 +1,42 @@
+# Promptfoo：Lookbook Prompt Agent Harness 回归
+# 运行：./scripts/run-promptfoo.sh
+
+description: Lookbook Prompt Agent eval (text-side)
+
+providers:
+  - id: http
+    config:
+      url: http://127.0.0.1:8155/api/agent-runtime/agents/{{agent_id}}/invoke
+      method: POST
+      headers:
+        Content-Type: application/json
+      body:
+        model_id: "{{model_id}}"
+        clothing_ids: "{{clothing_ids}}"
+        reference_id: "{{reference_id}}"
+        size: "{{size}}"
+        quantity: "{{quantity}}"
+        business_context:
+          merchant_need: "{{merchant_need}}"
+          target_audience: "{{target_audience}}"
+        acceptance_criteria: "{{acceptance_criteria}}"
+      transformResponse: |
+        JSON.stringify(json)
+    label: lookbook-agent
+
+prompts:
+  - "{{name}}"
+
+tests: file://tests.yaml
+
+defaultTest:
+  assert:
+    - type: javascript
+      value: |
+        const data = typeof output === 'string' ? JSON.parse(output) : output;
+        const n = (data.prompts || []).length;
+        const qty = parseInt(String(context.vars.quantity || 4), 10);
+        return n >= qty;
+
+evaluateOptions:
+  maxConcurrency: 2

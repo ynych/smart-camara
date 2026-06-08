@@ -26,15 +26,21 @@ for d in [ASSETS_DIR, UPLOADS_DIR, GENERATED_DIR, THUMBS_DIR]:
     os.makedirs(d, exist_ok=True)
 
 def get_chat_api_config():
-    """文本大模型配置：env 优先，缺项从 DB volcano_chat / volcano 生图 Key 补齐。"""
+    """文本大模型配置：env 优先，无效 ark- 时回退 DB；缺项从 DB / 生图 Key 补齐。"""
     chat_endpoint = (
         os.environ.get("VOLCANO_CHAT_ENDPOINT")
         or os.environ.get("VOLCANO_LLM_ENDPOINT")
         or ""
     ).strip()
+    try:
+        from agents.prompt_agent import validate_chat_endpoint_id
+        if validate_chat_endpoint_id(chat_endpoint):
+            chat_endpoint = ""
+    except ImportError:
+        pass
     chat_key = (
         os.environ.get("VOLCANO_CHAT_API_KEY")
-        or os.environ.get("VOLCANO_API_KEY")
+        or os.environ.get("ARK_API_KEY")
         or ""
     ).strip()
 
@@ -47,10 +53,19 @@ def get_chat_api_config():
                 chat_endpoint = chat_cfg.endpoint.strip()
             if not chat_key and chat_cfg.api_key:
                 chat_key = chat_cfg.api_key.strip()
+        if not chat_key:
+            chat_key = (os.environ.get("VOLCANO_API_KEY") or "").strip()
         if not chat_key and volcano_cfg and volcano_cfg.api_key:
             chat_key = volcano_cfg.api_key.strip()
     finally:
         db.close()
+
+    try:
+        from agents.prompt_agent import validate_chat_endpoint_id
+        if validate_chat_endpoint_id(chat_endpoint):
+            chat_endpoint = ""
+    except ImportError:
+        pass
 
     if chat_endpoint and chat_key:
         return {
@@ -96,10 +111,15 @@ def init_default_data():
         volcano_row = db.query(ApiConfig).filter(ApiConfig.provider == "volcano").first()
         chat_key = (
             os.environ.get("VOLCANO_CHAT_API_KEY")
+            or os.environ.get("ARK_API_KEY")
             or os.environ.get("VOLCANO_API_KEY")
             or (volcano_row.api_key if volcano_row else "")
         ).strip()
         chat_existing = db.query(ApiConfig).filter(ApiConfig.provider == "volcano_chat").first()
+        if chat_endpoint:
+            from agents.prompt_agent import validate_chat_endpoint_id
+            if validate_chat_endpoint_id(chat_endpoint):
+                chat_endpoint = ""
         if not chat_existing and chat_endpoint and chat_key:
             db.add(ApiConfig(
                 provider="volcano_chat",
@@ -109,8 +129,12 @@ def init_default_data():
                 is_active=1,
             ))
         elif chat_existing:
+            from agents.prompt_agent import validate_chat_endpoint_id
+            if chat_existing.endpoint and validate_chat_endpoint_id(chat_existing.endpoint):
+                chat_existing.endpoint = ""
             if chat_endpoint and chat_existing.endpoint != chat_endpoint:
-                chat_existing.endpoint = chat_endpoint
+                if not validate_chat_endpoint_id(chat_endpoint):
+                    chat_existing.endpoint = chat_endpoint
             if chat_key and not chat_existing.api_key:
                 chat_existing.api_key = chat_key
         elif chat_endpoint and volcano_row and volcano_row.api_key:

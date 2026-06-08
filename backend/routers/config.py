@@ -44,7 +44,13 @@ def update_config(data: dict):
         if data.get("api_key"):
             config.api_key = data["api_key"]
         if "endpoint" in data:
-            config.endpoint = data["endpoint"]
+            endpoint = (data["endpoint"] or "").strip()
+            if provider == "volcano_chat":
+                from agents.prompt_agent import validate_chat_endpoint_id
+                bad = validate_chat_endpoint_id(endpoint)
+                if bad:
+                    raise HTTPException(status_code=400, detail=bad)
+            config.endpoint = endpoint
         if "model" in data:
             config.model = data["model"]
         if "is_active" in data:

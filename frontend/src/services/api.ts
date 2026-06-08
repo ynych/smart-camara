@@ -83,6 +83,30 @@ export const deleteTask = (id: string) => api.delete(`/api/lookbook/tasks/${id}`
 export const reviewGeneratedImage = (id: string, status: 'approved' | 'rejected', feedback?: string) =>
     api.post(`/api/lookbook/images/${id}/review`, { status, feedback });
 
+// Harness & 评价 API
+export const getHarnessTools = () => api.get('/api/harness/tools');
+export const runHarnessTool = (toolId: string, context: Record<string, unknown>) =>
+  api.post(`/api/harness/tools/${toolId}/run`, { context });
+export const getHarnessPipeline = (pipelineId = 'lookbook_v1') =>
+  api.get('/api/harness/pipeline', { params: { pipeline_id: pipelineId } });
+export const runHarnessPipeline = (data: {
+  context: Record<string, unknown>;
+  enabled_modules?: string[];
+  include_regen?: boolean;
+}) => api.post('/api/harness/pipeline/run', data);
+export const runHarnessModule = (moduleId: string, context: Record<string, unknown>) =>
+  api.post(`/api/harness/pipeline/module/${moduleId}/run`, { context });
+export const getHarnessContext = (imageId: string) => api.get(`/api/harness/context/${imageId}`);
+
+export const getEvaluation = (imageId: string) => api.get(`/api/evaluations/${imageId}`);
+export const saveEvaluation = (imageId: string, data: Record<string, unknown>) =>
+  api.post(`/api/evaluations/${imageId}`, data);
+export const generateAiEvaluation = (imageId: string) => api.post(`/api/evaluations/${imageId}/ai-draft`);
+export const optimizeImagePrompt = (imageId: string, confirmedPrompt?: string) =>
+  api.post(`/api/images/${imageId}/optimize-prompt`, confirmedPrompt ? { confirmed_prompt: confirmedPrompt } : {});
+export const regenerateImage = (imageId: string, prompt: string) =>
+  api.post(`/api/images/${imageId}/regenerate`, { prompt });
+
 // Legacy exports kept so inactive pages still type-check.
 export const getScenes = () => api.get('/api/scenes');
 export const createScene = (data: any) => api.post('/api/scenes', data);

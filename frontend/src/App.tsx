@@ -1,62 +1,57 @@
 import React from 'react';
-import { Layout, Menu, Typography } from 'antd';
-import { CameraOutlined, PictureOutlined, SettingOutlined, FolderOutlined } from '@ant-design/icons';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
+import MainLayout from './layouts/MainLayout';
+import AdminLayout from './layouts/AdminLayout';
 import LookbookStudio from './pages/LookbookStudio';
 import Materials from './pages/Materials';
 import Gallery from './pages/Gallery';
 import Settings from './pages/Settings';
+import NewTask from './pages/admin/NewTask';
+import Conversations from './pages/admin/Conversations';
+import AgentsPage from './pages/admin/AgentsPage';
+import SkillsPage from './pages/admin/SkillsPage';
+import HarnessTestCases from './pages/admin/HarnessTestCases';
+import PipelineVersions from './pages/admin/PipelineVersions';
+import AgentRuns from './pages/admin/AgentRuns';
+import GoldenRegression from './pages/admin/GoldenRegression';
+import HarnessPipeline from './pages/HarnessPipeline';
+import HarnessTools from './pages/HarnessTools';
 import './App.css';
 
-const { Header, Sider, Content } = Layout;
-const { Title } = Typography;
-
-const menuItems = [
-  { key: '/materials', icon: <FolderOutlined />, label: '素材管理' },
-  { key: '/studio', icon: <CameraOutlined />, label: '生图工作台' },
-  { key: '/history', icon: <PictureOutlined />, label: '历史任务' },
-  { key: '/settings', icon: <SettingOutlined />, label: '设置' },
-];
-
-const AppContent: React.FC = () => {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const [collapsed, setCollapsed] = React.useState(false);
-
-  return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} width={200}
-        style={{ overflow: 'auto', height: '100vh', position: 'fixed', left: 0, top: 0, bottom: 0 }}>
-        <div className="logo">
-          <CameraOutlined style={{ fontSize: 24, color: '#1890ff' }} />
-          {!collapsed && <span className="logo-text">私人摄影团队</span>}
-        </div>
-        <Menu theme="dark" mode="inline" selectedKeys={[location.pathname]}
-          items={menuItems} onClick={({ key }) => navigate(key)} />
-      </Sider>
-      <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: 'margin-left 0.2s' }}>
-        <Header style={{ padding: '0 24px', background: '#fff', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', height: 56 }}>
-          <Title level={4} style={{ margin: 0 }}>私人摄影团队 MVP</Title>
-        </Header>
-        <Content style={{ margin: 24, padding: 24, background: '#fff', borderRadius: 8, minHeight: 'calc(100vh - 56px - 48px)' }}>
-          <Routes>
-            <Route path="/studio" element={<LookbookStudio />} />
-            <Route path="/materials" element={<Materials />} />
-            <Route path="/history" element={<Gallery />} />
-            <Route path="/gallery" element={<Navigate to="/history" replace />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="*" element={<LookbookStudio />} />
-          </Routes>
-        </Content>
-      </Layout>
-    </Layout>
-  );
-};
-
 const App: React.FC = () => (
-  <BrowserRouter>
-    <AppContent />
-  </BrowserRouter>
+  <Routes>
+    <Route element={<MainLayout />}>
+      <Route path="/studio" element={<LookbookStudio />} />
+      <Route path="/materials" element={<Materials />} />
+      <Route path="/history" element={<Gallery />} />
+      <Route path="/gallery" element={<Navigate to="/history" replace />} />
+      <Route path="/settings" element={<Settings />} />
+      <Route path="/" element={<LookbookStudio />} />
+      <Route path="/harness/*" element={<Navigate to="/admin/harness/testcases" replace />} />
+      <Route path="/admin" element={<Navigate to="/admin/new-task" replace />} />
+    </Route>
+
+    <Route path="/admin" element={<AdminLayout />}>
+      <Route path="new-task" element={<NewTask />} />
+      <Route path="conversations" element={<Conversations />} />
+      <Route path="runs" element={<AgentRuns />} />
+      <Route path="agents" element={<AgentsPage />} />
+      <Route path="agents/studio" element={<Navigate to="/admin/agents" replace />} />
+      <Route path="skills" element={<SkillsPage />} />
+      <Route path="mcp-servers" element={<Navigate to="/admin/conversations" replace />} />
+      <Route path="tasks" element={<Navigate to="/studio" replace />} />
+      <Route path="harness/testcases" element={<HarnessTestCases />} />
+      <Route path="harness/versions" element={<PipelineVersions />} />
+      <Route path="harness/modules" element={<Navigate to="/admin/harness/pipeline" replace />} />
+      <Route path="harness/pipeline" element={<HarnessPipeline />} />
+      <Route path="harness/tools" element={<HarnessTools />} />
+      <Route path="harness/prompts" element={<Navigate to="/admin/harness/pipeline" replace />} />
+      <Route path="harness/regression" element={<GoldenRegression />} />
+      <Route index element={<Navigate to="new-task" replace />} />
+    </Route>
+
+    <Route path="*" element={<Navigate to="/studio" replace />} />
+  </Routes>
 );
 
 export default App;

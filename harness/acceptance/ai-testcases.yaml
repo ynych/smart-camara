@@ -1,0 +1,279 @@
+# AI 验收 TestCase 规范 — 私人摄影团队 MVP
+# 用途：Agent / CI / Promptfoo 可执行的验收清单；与 plan.md §一、§十七、§二十四 对齐
+# 执行：见 harness/acceptance/README.md
+
+version: "1.0"
+product: 私人摄影团队 MVP
+platforms:
+  user: [studio, materials, history, settings]
+  admin: [harness/testcases, harness/versions, harness/pipeline, harness/regression, runs, agents]
+
+# ── 核心用户需求（User Stories → 可测断言）────────────────────────────
+
+user_requirements:
+  - id: UR-01
+    persona: 摄影师
+    story: 上传/扫描本地素材，按模特卡、服装套装、Lookbook 参考分组浏览
+    success: 素材可被选入工作台；缩略图可加载
+  - id: UR-02
+    persona: 需求负责人
+    story: 在工作台选择模特+服装+参考图，一键生成多角度生图提示词
+    success: prompt_source=llm；条数≥quantity；含模块 trace
+  - id: UR-03
+    persona: 需求负责人
+    story: 确认提示词后调用 Seedream 生图（仅用户平台）
+    success: 任务 completed；生成图可预览；尺寸映射正确
+  - id: UR-04
+    persona: 高级摄影师
+    story: 对成图做结构化专家评价，作为 ground truth
+    success: ImageEvaluation 持久化；可编辑保存
+  - id: UR-05
+    persona: Agent 工程师
+    story: 在 Admin 用固定样本跑 Agent，双轨评测（文本 Judge ∥ 人评）
+    success: run-evaluation 返回 pass；Runs 可回放 trace
+  - id: UR-06
+    persona: 摄影指导
+    story: 修改 Pipeline draft 模板，版本对比后人工发布
+    success: Compare 双轨不降；Publish 后用户平台读新版
+
+# ── 全局门禁（任何用例失败则整体验收不通过）────────────────────────
+
+global_gates:
+  - id: G-ENV
+    assert: POST /api/config/test-chat → success=true, api_mode=responses
+  - id: G-AGENT
+    assert: GET /api/agent-runtime/agents/default → slug=lookbook_prompt_agent_v1
+  - id: G-BOUNDARY
+    assert: POST /api/agent-runtime/harness-testcases/{id}/run-images → HTTP 410
+
+# ── 可执行 TestCase（AI / Promptfoo / curl 脚本）────────────────────
+
+fixtures:
+  model_id: 8a2ef835-bf47-4616-891d-bb584cc5be63
+  clothing_ids: [8baf75e8-f41a-44b9-9fb5-ca40a90051e8]
+  reference_id: a93c7bf2-b47b-410a-8571-99b775e3df11
+  business_context:
+    merchant_need: 电商主图与详情页展示
+    target_audience: 25-35 岁都市女性
+  acceptance_criteria: |
+    1. 模特身份、五官和体态与所选模特参考保持一致
+    2. 服装款式、颜色、版型和关键细节与所选服装素材一致
+    3. 场景氛围与所选参考图/场景图一致，背景不抢主体
+    4. 输出为3:4比例，构图完整且无明显裁切
+    5. 图片清晰、光线自然、无明显肢体畸形、文字水印或商品变形
+
+testcases:
+  # ── 用户平台 ──
+  - id: TC-U01
+    requirement: UR-01
+    name: 素材分组扫描
+    layer: user
+    steps:
+      - method: GET
+        path: /api/materials/grouped
+    assert:
+      - type: json
+        path: $.models
+        op: length_gte
+        value: 1
+      - type: json
+        path: $.clothing_sets
+        op: length_gte
+        value: 1
+
+  - id: TC-U02
+    requirement: UR-02
+    name: 工作台生成提示词（LLM 轨）
+    layer: user
+    steps:
+      - method: POST
+        path: /api/lookbook/generate-prompt
+        body:
+          model_id: "{{fixtures.model_id}}"
+          clothing_ids: "{{fixtures.clothing_ids}}"
+          reference_id: "{{fixtures.reference_id}}"
+          quantity: 2
+          size: "3:4"
+          business_context: "{{fixtures.business_context}}"
+          acceptance_criteria: "{{fixtures.acceptance_criteria}}"
+    assert:
+      - type: json
+        path: $.prompt_source
+        op: eq
+        value: llm
+      - type: json
+        path: $.llm_error
+        op: is_null
+      - type: json
+        path: $.prompts
+        op: length_gte
+        value: 2
+      - type: json
+        path: $.agent_slug
+        op: eq
+        value: lookbook_prompt_agent_v1
+      - type: json
+        path: $.trace[?(@.step=='llm_generate')].source
+        op: contains
+        value: llm
+    timeout_sec: 120
+
+  - id: TC-U03
+    requirement: UR-02
+    name: 提示词文本 Judge（E1 口径）
+    layer: eval
+    depends_on: TC-U02
+    steps:
+      - reuse_output: TC-U02
+        as: prompt_result
+      - method: POST
+        path: /api/agent-runtime/harness-testcases/run-evaluation-inline
+        note: 若无此 API，改用 Admin TestCase run-prompts + run-evaluation
+    assert:
+      - type: llm_judge
+        rubric: E1
+        min_avg: 3.5
+        pass: true
+
+  - id: TC-U04
+    requirement: UR-03
+    name: Seedream 生图（用户平台唯一路径）
+    layer: user
+    manual_gate: true  # 耗时长、消耗 API 配额；CI 可 skip
+    steps:
+      - method: POST
+        path: /api/lookbook/generate
+        body:
+          model_id: "{{fixtures.model_id}}"
+          clothing_ids: "{{fixtures.clothing_ids}}"
+          reference_id: "{{fixtures.reference_id}}"
+          quantity: 1
+          size: "3:4"
+    assert:
+      - type: json
+        path: $.task_id
+        op: present
+      - type: json
+        path: $.images
+        op: length_gte
+        value: 1
+
+  # ── Agent 平台 ──
+  - id: TC-A01
+    requirement: UR-05
+    name: Agent invoke 契约
+    layer: admin
+    steps:
+      - method: GET
+        path: /api/agent-runtime/agents/default
+        save: agent_id
+      - method: POST
+        path: /api/agent-runtime/agents/{{agent_id}}/invoke
+        body:
+          model_id: "{{fixtures.model_id}}"
+          clothing_ids: "{{fixtures.clothing_ids}}"
+          reference_id: "{{fixtures.reference_id}}"
+          quantity: 4
+          size: "3:4"
+          business_context: "{{fixtures.business_context}}"
+          acceptance_criteria: "{{fixtures.acceptance_criteria}}"
+    assert:
+      - type: json
+        path: $.source
+        op: in
+        value: [llm, harness]
+      - type: json
+        path: $.prompts
+        op: length_gte
+        value: 4
+      - type: json
+        path: $.run_id
+        op: present
+
+  - id: TC-A02
+    requirement: UR-05
+    name: Harness TestCase 闭环（无联调生图）
+    layer: admin
+    steps:
+      - method: POST
+        path: /api/agent-runtime/harness-testcases/{{harness_case_id}}/run-prompts
+      - method: POST
+        path: /api/agent-runtime/harness-testcases/{{harness_case_id}}/run-evaluation
+    assert:
+      - type: json
+        path: $.evaluation.text_judge.pass
+        op: eq
+        value: true
+      - type: json
+        path: $.pass
+        op: eq
+        value: true
+
+  - id: TC-A03
+    requirement: UR-06
+    name: Pipeline 版本对比 API
+    layer: admin
+    steps:
+      - method: POST
+        path: /api/pipeline-versions/compare
+        body:
+          testcase_ids: []  # 空=全部 ready 用例
+          max_cases: 5
+    assert:
+      - type: json
+        path: $.published.summary.text_pass_rate
+        op: present
+      - type: json
+        path: $.draft.summary.text_pass_rate
+        op: present
+
+  - id: TC-A04
+    requirement: UR-05
+    name: Promptfoo 回归导出
+    layer: admin
+    steps:
+      - method: POST
+        path: /api/agent-runtime/promptfoo/sync
+      - shell: ./scripts/run-promptfoo.sh
+    assert:
+      - type: file_exists
+        path: harness/promptfoo/tests.yaml.active
+      - type: promptfoo
+        min_pass_rate: 0.7
+
+  - id: TC-A05
+    requirement: UR-04
+    name: 评价导入 TestCase（双轨之人评轨）
+    layer: admin
+    manual_gate: true  # 需先有带评价的生成图
+    steps:
+      - method: POST
+        path: /api/admin/harness-testcases/import-from-evaluation/{{image_id}}
+      - method: POST
+        path: /api/agent-runtime/harness-testcases/{{new_case_id}}/run-evaluation
+    assert:
+      - type: json
+        path: $.evaluation.human_eval.overall
+        op: in
+        value: [good, fair, poor]
+      - type: json
+        path: $.evaluation.tracks.human.weight
+        op: eq
+        value: 0.5
+
+# ── AI 验收决策规则（plan §3.1 信号 C）──────────────────────────────
+
+acceptance_decision:
+  text_track:
+    weight: 0.5
+    metrics: [text_judge.avg, text_judge.pass, promptfoo_pass_rate]
+    threshold:
+      min_avg: 3.5
+      min_pass_rate: 0.7
+  human_track:
+    weight: 0.5
+    metrics: [human_eval.overall, human_eval.scores]
+    threshold:
+      min_good_rate: 0.6
+  publish_rule: 文本轨不低于 published 基线 AND 人评 good 率不低于 import 快照
+  fallback: 无人评快照时仅看文本轨

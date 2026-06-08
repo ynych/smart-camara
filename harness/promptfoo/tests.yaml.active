@@ -1,0 +1,16 @@
+# 由 API 自动生成：GET /api/agent-runtime/promptfoo/tests.yaml
+# 来源：Harness TestCases + Golden Cases
+
+- vars:
+    name: 默认 Harness TestCase
+    source: harness_testcase
+    case_id: d5659877-9e8d-4e14-acd9-e15f43f43be8
+    agent_id: c1cfacac-a362-4c86-9a8d-64ff9a833a72
+    model_id: ''
+    clothing_ids: []
+    reference_id: ''
+    size: '3:4'
+    quantity: 4
+    merchant_need: 电商主图与详情页展示
+    target_audience: 25-35 岁都市女性
+    acceptance_criteria: 服装颜色准确，构图专业，光线自然

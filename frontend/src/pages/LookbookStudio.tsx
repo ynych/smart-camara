@@ -32,6 +32,7 @@ import {
   SkinOutlined,
   UserOutlined,
   WarningOutlined,
+  FormOutlined,
 } from '@ant-design/icons';
 import {
   checkClothingConflict,
@@ -42,6 +43,7 @@ import {
 } from '../services/api';
 import { toContentUrl } from '../utils/contentUrl';
 import { toMediaUrl } from '../utils/mediaUrl';
+import ImageEvaluationModal from '../components/ImageEvaluationModal';
 
 const STEP_SECTIONS: Record<number, string> = {
   0: 'model',
@@ -97,6 +99,10 @@ const LookbookStudio: React.FC = () => {
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectImageId, setRejectImageId] = useState('');
   const [rejectFeedback, setRejectFeedback] = useState('');
+  const [evalModal, setEvalModal] = useState<{ open: boolean; imageId: string; path?: string; angle?: string }>({
+    open: false,
+    imageId: '',
+  });
   const [previewItem, setPreviewItem] = useState<any>(null);
   const loadedSectionsRef = useRef<Set<string>>(new Set());
 
@@ -193,11 +199,17 @@ const LookbookStudio: React.FC = () => {
       })));
       setCurrentStep(3);
       const src = res.data?.prompt_source;
+      const slug = res.data?.agent_slug || 'lookbook_prompt_agent_v1';
       if (src === 'llm') {
-        message.success('已由大模型生成验收标准与提示词');
+        message.success(`Agent「${slug}」已生成提示词（LLM）`);
+      } else if (src === 'harness') {
+        const detail = res.data?.llm_error || 'LLM 未可用';
+        const hint = detail.includes('未配置') || detail.includes('VOLCANO_CHAT')
+          ? ' → 请到「设置」页配置 ep- 豆包对话接入点'
+          : '';
+        message.warning(`Agent「${slug}」已运行；${detail}${hint}；已用 Harness 组装`, 10);
       } else {
-        const detail = res.data?.llm_error || '未配置对话模型或调用失败';
-        message.warning(`${detail}；已使用模板生成提示词`, 8);
+        message.info(`Agent「${slug}」来源：${src || 'unknown'}`);
       }
     } catch (e: any) {
       message.error('生成提示词失败: ' + (e.response?.data?.detail || e.message));
@@ -552,7 +564,17 @@ const LookbookStudio: React.FC = () => {
                     <Button key="bad" type="link" danger icon={<CloseCircleOutlined />} onClick={() => { setRejectImageId(img.id); setRejectModalOpen(true); }}>
                       不合格
                     </Button>,
-                  ]}
+                    img.id && (
+                      <Button
+                        key="eval"
+                        type="link"
+                        icon={<FormOutlined />}
+                        onClick={() => setEvalModal({ open: true, imageId: img.id, path: img.path, angle: img.angle })}
+                      >
+                        评价
+                      </Button>
+                    ),
+                  ].filter(Boolean)}
                 >
                   <Card.Meta
                     title={img.angle || `图片${index + 1}`}
@@ -611,6 +633,15 @@ const LookbookStudio: React.FC = () => {
           placeholder="例如：服装颜色偏差、模特手部异常、背景不符合参考图、构图裁切等"
         />
       </Modal>
+
+      <ImageEvaluationModal
+        open={evalModal.open}
+        imageId={evalModal.imageId}
+        imagePath={evalModal.path}
+        angle={evalModal.angle}
+        onClose={() => setEvalModal({ open: false, imageId: '' })}
+        onRegenerated={(newImg) => setGeneratedImages((prev) => [...prev, newImg])}
+      />
 
       {previewItem && (
         <div style={{ display: 'none' }}>

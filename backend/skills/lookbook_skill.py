@@ -11,6 +11,8 @@ from tools.file_tool import FileTool
 from tools.material_tool import MaterialTool
 from tools.image_tool import ImageTool
 from services.prompt_optimizer import PromptOptimizer
+from harness.context import HarnessContext
+from harness.engine import run_pipeline
 
 class LookbookSkill:
     """Lookbook生成Skill - 业务层核心"""
@@ -178,16 +180,24 @@ class LookbookSkill:
 
         prompts = []
         for i, template in enumerate(angle_templates):
-            prompt = self._compose_prompt(
+            hctx = HarnessContext(
+                model_id=model_id,
+                clothing_ids=clothing_ids or [],
+                reference_id=reference_id or "",
+                scene_id=scene_id or "",
                 model_desc=ctx["model_desc"],
                 clothing_desc=ctx["clothing_desc"],
+                scene_desc=ctx["scene_desc"],
+                style_hint=ctx["style_hint"],
+                goal_text=ctx["business_context"].get("merchant_need") or "电商 Lookbook 主图/详情页展示",
+                constraint_text=acceptance_criteria or ctx.get("context_hint", ""),
+                size=size,
                 angle_name=template["name"],
                 angle_desc=template["desc"],
-                style_hint=ctx["style_hint"],
-                scene_desc=ctx["scene_desc"],
-                size=size,
-                context_hint=ctx["context_hint"],
+                business_context=ctx["business_context"],
             )
+            pipeline_result = run_pipeline(hctx, include_regen=False)
+            prompt = pipeline_result["prompt"]
             prompt = self._apply_feedback_improvements(prompt)
             prompts.append({
                 "index": i,
@@ -195,9 +205,10 @@ class LookbookSkill:
                 "angle_desc": template["desc"],
                 "prompt": prompt,
                 "editable": True,
-                "source": "template",
+                "source": "harness",
+                "prompt_modules": pipeline_result.get("modules") or [],
             })
-        return prompts, "template", llm_error
+        return prompts, "harness", llm_error
 
     def build_prompts(
         self,
@@ -648,6 +659,9 @@ class LookbookSkill:
                 if not prompt:
                     continue
                 prompt = self._prepend_image_roles(prompt, image_roles_prefix)
+                modules_json = None
+                if isinstance(prompt_data, dict) and prompt_data.get("prompt_modules"):
+                    modules_json = json.dumps(prompt_data["prompt_modules"], ensure_ascii=False)
                 image_content = await self.image_tool.generate(prompt, image_paths=reference_images, size=size)
                 file_path = self.file_tool.save_generated(task_id, image_content, i)
                 image_id = None
@@ -660,6 +674,8 @@ class LookbookSkill:
                         prompt=prompt,
                         status="pending",
                         acceptance_criteria=acceptance_criteria,
+                        generation_round=1,
+                        prompt_modules_json=modules_json,
                     )
                     db.add(image)
                     db.commit()

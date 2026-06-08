@@ -64,4 +64,12 @@ uvicorn main:app --reload --port 8155
 cd frontend && npm install && npm run dev
 ```
 
+### 测试（TDD）
+
+```bash
+./scripts/run-tests.sh
+```
+
+域中间态检查：`POST /api/health/domain-checks`（见 [plan.md](plan.md) §〇·二）
+
 Vite 已将 `/api`、`/assets`、`/content` 代理到后端。
