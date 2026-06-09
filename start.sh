@@ -17,11 +17,20 @@ fi
 # 优先使用项目虚拟环境（启动前由 ensure_backend_env 保证可用）
 PYTHON=python3
 
+_venv_python_ok() {
+    local py="$1"
+    [ -n "$py" ] && [ -x "$py" ] && "$py" -c 'import sys' > /dev/null 2>&1
+}
+
 ensure_backend_env() {
-    if [ ! -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+    if [ -x "$SCRIPT_DIR/.venv/bin/python" ] && ! _venv_python_ok "$SCRIPT_DIR/.venv/bin/python"; then
+        echo "      检测到无效虚拟环境（可能由 rsync 从其他系统同步），正在重建..."
+        rm -rf "$SCRIPT_DIR/.venv"
+    fi
+    if ! _venv_python_ok "$SCRIPT_DIR/.venv/bin/python"; then
         echo "      创建 Python 虚拟环境 (.venv)..."
         if ! python3 -m venv "$SCRIPT_DIR/.venv"; then
-            echo "      ✗ 无法创建虚拟环境，请确认已安装 python3"
+            echo "      ✗ 无法创建虚拟环境，请确认已安装 python3-venv"
             exit 1
         fi
     fi
@@ -35,7 +44,7 @@ ensure_backend_env() {
     fi
 }
 
-if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
+if [ -f "$SCRIPT_DIR/.venv/bin/activate" ] && _venv_python_ok "$SCRIPT_DIR/.venv/bin/python"; then
     # shellcheck disable=SC1091
     source "$SCRIPT_DIR/.venv/bin/activate"
 fi
