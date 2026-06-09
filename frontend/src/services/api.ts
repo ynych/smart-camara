@@ -1,6 +1,5 @@
 import axios from 'axios';
-
-const API_BASE = 'http://127.0.0.1:8155';
+import { API_BASE } from '../utils/apiBase';
 
 const api = axios.create({ baseURL: API_BASE });
 
@@ -18,6 +17,8 @@ export const updateRequirement = (id: string, data: any) => api.put(`/api/lookbo
 export const analyzeRequirement = (id: string, description?: string) => api.post(`/api/lookbook/requirements/${id}/analyze`, { description });
 export const getStyles = () => api.get('/api/lookbook/styles');
 export const generateLookbook = (data: {
+    studio_task_id?: string;
+    prompt_run_id?: string;
     requirement_id?: string;
     model_id?: string;
     clothing_ids?: string[];
@@ -67,6 +68,7 @@ export const checkClothingConflict = (items: any[]) =>
 
 // Lookbook - 新增
 export const generatePrompt = (data: {
+    studio_task_id?: string;
     model_id: string;
     clothing_ids: string[];
     reference_id: string;
@@ -130,5 +132,18 @@ export const deleteDelivery = (id: string) => api.delete(`/api/deliveries/${id}`
 export const regenerateDelivery = (id: string) => api.post(`/api/deliveries/${id}/regenerate`);
 export const approveDelivery = (id: string) => api.post(`/api/deliveries/${id}/approve`);
 export const rejectDelivery = (id: string, feedback: string) => api.post(`/api/deliveries/${id}/reject`, { feedback });
+
+// 生图工作台任务
+export const listStudioTasks = async () => {
+  const r = await api.get<{ tasks: unknown[] }>('/api/lookbook/studio-tasks');
+  return Array.isArray(r.data?.tasks) ? r.data.tasks : [];
+};
+export const createStudioTask = async (data?: Record<string, unknown>) => {
+  const r = await api.post<Record<string, unknown>>('/api/lookbook/studio-tasks', data ?? {});
+  return r.data;
+};
+export const getStudioTask = (id: string) => api.get(`/api/lookbook/studio-tasks/${id}`).then((r) => r.data);
+export const patchStudioTask = (id: string, data: Record<string, unknown>) =>
+  api.patch(`/api/lookbook/studio-tasks/${id}`, data).then((r) => r.data);
 
 export default api;

@@ -21,6 +21,7 @@ import {
   message,
 } from 'antd';
 import {
+  ArrowLeftOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   EditOutlined,
@@ -36,14 +37,20 @@ import {
 } from '@ant-design/icons';
 import {
   checkClothingConflict,
+  createStudioTask,
   generateLookbook,
   generatePrompt,
   getGroupedMaterials,
+  getStudioTask,
+  getTask,
+  listStudioTasks,
+  patchStudioTask,
   reviewGeneratedImage,
 } from '../services/api';
 import { toContentUrl } from '../utils/contentUrl';
 import { toMediaUrl } from '../utils/mediaUrl';
 import ImageEvaluationModal from '../components/ImageEvaluationModal';
+import StudioTaskList, { type StudioTaskItem } from '../components/StudioTaskList';
 
 const STEP_SECTIONS: Record<number, string> = {
   0: 'model',
@@ -73,7 +80,21 @@ const sizeOptions = [
   { label: '9:16 移动端', value: '9:16' },
 ];
 
+const STATUS_LABEL: Record<string, string> = {
+  draft: '编辑中',
+  prompts_ready: '待生图',
+  generating: '生图中',
+  completed: '已完成',
+  failed: '失败',
+};
+
 const LookbookStudio: React.FC = () => {
+  const [viewMode, setViewMode] = useState<'list' | 'edit'>('list');
+  const [studioTasks, setStudioTasks] = useState<StudioTaskItem[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [studioTaskId, setStudioTaskId] = useState<string | null>(null);
+  const [studioTaskStatus, setStudioTaskStatus] = useState<string>('draft');
+
   const [currentStep, setCurrentStep] = useState(0);
   const [materials, setMaterials] = useState<any>({});
   const [materialsLoading, setMaterialsLoading] = useState(false);
@@ -89,6 +110,7 @@ const LookbookStudio: React.FC = () => {
   const [targetAudience, setTargetAudience] = useState('关注质感、通勤和日常穿搭的女性用户');
   const [acceptanceCriteria, setAcceptanceCriteria] = useState('');
   const [prompts, setPrompts] = useState<PromptItem[]>([]);
+  const [promptRunId, setPromptRunId] = useState<string | null>(null);
 
   const [generatingPrompts, setGeneratingPrompts] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -105,6 +127,198 @@ const LookbookStudio: React.FC = () => {
   });
   const [previewItem, setPreviewItem] = useState<any>(null);
   const loadedSectionsRef = useRef<Set<string>>(new Set());
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isEditable = studioTaskStatus !== 'completed' && studioTaskStatus !== 'generating';
+  const canGenerate = isEditable && prompts.length > 0 && prompts.some((p) => p.prompt?.trim());
+
+  const loadTasks = useCallback(async () => {
+    setTasksLoading(true);
+    try {
+      const tasks = await listStudioTasks();
+      setStudioTasks(tasks);
+    } catch (e: any) {
+      const detail = e.response?.data?.detail;
+      message.error('加载任务列表失败: ' + (typeof detail === 'string' ? detail : e.message));
+    } finally {
+      setTasksLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (viewMode === 'list') {
+      loadTasks();
+    }
+  }, [viewMode, loadTasks]);
+
+  const restoreSelections = useCallback((task: Record<string, unknown>, mats: Record<string, unknown>) => {
+    const modelCards = (mats.model_cards as any[]) || [];
+    const model = modelCards.find((m) => m.id === task.model_id);
+    setSelectedModel(model || null);
+
+    const clothingIds = (task.clothing_ids as string[]) || [];
+    const clothing: ClothingItem[] = [];
+    for (const set of (mats.clothing_sets as any[]) || []) {
+      for (const item of set.items || []) {
+        if (clothingIds.includes(item.id)) {
+          clothing.push({
+            id: item.id,
+            outfit_set: set.name,
+            file_path: item.file_path,
+            name: item.name,
+            sub_type: item.shoot_type || item.sub_type || item.sub_category,
+          });
+        }
+      }
+    }
+    setSelectedClothing(clothing);
+
+    const refs = (mats.lookbook_refs as any[]) || [];
+    setSelectedReference(refs.find((r) => r.id === task.reference_id) || null);
+    const scenes = (mats.scenes as any[]) || [];
+    setSelectedScene(scenes.find((s) => s.id === task.scene_id) || null);
+  }, []);
+
+  const inferStep = (task: Record<string, unknown>): number => {
+    const status = task.status as string;
+    const taskPrompts = (task.prompts as unknown[]) || [];
+    if (status === 'completed' || status === 'generating') return 4;
+    if (status === 'prompts_ready' || taskPrompts.length > 0) return 3;
+    if (task.model_id && ((task.clothing_ids as string[]) || []).length > 0) return 2;
+    if (task.model_id) return 1;
+    return 0;
+  };
+
+  const resetEditor = () => {
+    setCurrentStep(0);
+    setSelectedModel(null);
+    setSelectedClothing([]);
+    setSelectedReference(null);
+    setSelectedScene(null);
+    setPromptRunId(null);
+    setPrompts([]);
+    setAcceptanceCriteria('');
+    setGeneratedImages([]);
+    setTaskStatus('');
+    setTaskProgress(0);
+    setMerchantNeed('电商Lookbook效果图，用于商品详情页和投放素材');
+    setTargetAudience('关注质感、通勤和日常穿搭的女性用户');
+    setSize('3:4');
+    setQuantity(4);
+    loadedSectionsRef.current.clear();
+  };
+
+  const buildPatchPayload = useCallback((overrides: Record<string, unknown> = {}) => ({
+    model_id: selectedModel?.id,
+    model_name: selectedModel?.name,
+    clothing_ids: selectedClothing.map((c) => c.id),
+    reference_id: selectedReference?.id || null,
+    scene_id: selectedScene?.id || null,
+    size,
+    quantity,
+    business_context: { merchant_need: merchantNeed, target_audience: targetAudience },
+    acceptance_criteria: acceptanceCriteria,
+    prompts,
+    prompt_run_id: promptRunId,
+    ...overrides,
+  }), [
+    selectedModel, selectedClothing, selectedReference, selectedScene,
+    size, quantity, merchantNeed, targetAudience, acceptanceCriteria, prompts, promptRunId,
+  ]);
+
+  const persistStudioTask = useCallback(async (overrides: Record<string, unknown> = {}) => {
+    if (!studioTaskId || !isEditable) return;
+    try {
+      const updated = await patchStudioTask(studioTaskId, buildPatchPayload(overrides));
+      if (updated.status) setStudioTaskStatus(updated.status);
+    } catch (e: any) {
+      const detail = e.response?.data?.detail || e.message;
+      if (!String(detail).includes('不可编辑')) {
+        message.error('保存任务失败: ' + detail);
+      }
+    }
+  }, [studioTaskId, isEditable, buildPatchPayload]);
+
+  const scheduleSave = useCallback(() => {
+    if (!studioTaskId || !isEditable) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => { persistStudioTask(); }, 800);
+  }, [studioTaskId, isEditable, persistStudioTask]);
+
+  const openTask = async (item: StudioTaskItem) => {
+    setTasksLoading(true);
+    try {
+      const task = await getStudioTask(item.id);
+      resetEditor();
+      setStudioTaskId(task.id);
+      setStudioTaskStatus(task.status || 'draft');
+      setSize(task.size || '3:4');
+      setQuantity(task.quantity || 4);
+      const bc = task.business_context || {};
+      setMerchantNeed(bc.merchant_need || merchantNeed);
+      setTargetAudience(bc.target_audience || targetAudience);
+      setAcceptanceCriteria(task.acceptance_criteria || '');
+      setPromptRunId(task.prompt_run_id || null);
+      setPrompts((task.prompts || []).map((p: any, i: number) => ({
+        index: i,
+        angle_name: p.angle_name || `图片${i + 1}`,
+        prompt: p.prompt || '',
+      })));
+
+      await getGroupedMaterials({ sections: 'model,clothing,refs,scenes' }).then((res) => {
+        const mats = res.data || {};
+        setMaterials(mats);
+        restoreSelections(task, mats);
+      });
+
+      const step = inferStep(task);
+      setCurrentStep(step);
+
+      if (task.status === 'completed' && task.lookbook_task_id) {
+        setTaskStatus('completed');
+        setTaskProgress(100);
+        try {
+          const tr = await getTask(task.lookbook_task_id);
+          setGeneratedImages(tr.data?.generated_images || []);
+        } catch {
+          message.warning('加载生成结果失败');
+        }
+      } else if (task.status === 'failed') {
+        setTaskStatus('failed');
+      } else if (task.status === 'generating') {
+        setTaskStatus('generating');
+      }
+
+      setViewMode('edit');
+    } catch (e: any) {
+      message.error('打开任务失败: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setTasksLoading(false);
+    }
+  };
+
+  const handleNewTask = async () => {
+    try {
+      const task = await createStudioTask({});
+      resetEditor();
+      setStudioTaskId(task.id);
+      setStudioTaskStatus('draft');
+      setViewMode('edit');
+      await fetchSection(0, true);
+    } catch (e: any) {
+      message.error('创建任务失败: ' + (e.response?.data?.detail || e.message));
+    }
+  };
+
+  const backToList = async () => {
+    if (studioTaskId && isEditable) {
+      await persistStudioTask();
+    }
+    setStudioTaskId(null);
+    setStudioTaskStatus('draft');
+    resetEditor();
+    setViewMode('list');
+  };
 
   const fetchSection = useCallback(async (step: number, force = false) => {
     const sections = STEP_SECTIONS[step];
@@ -177,9 +391,14 @@ const LookbookStudio: React.FC = () => {
       message.warning('请先选择模特和服装素材');
       return;
     }
+    if (!studioTaskId) {
+      message.warning('请先新建或打开任务');
+      return;
+    }
     setGeneratingPrompts(true);
     try {
       const res = await generatePrompt({
+        studio_task_id: studioTaskId,
         model_id: selectedModel.id,
         clothing_ids: selectedClothing.map((c) => c.id),
         reference_id: selectedReference?.id || '',
@@ -192,11 +411,14 @@ const LookbookStudio: React.FC = () => {
       const criteria = res.data?.acceptance_criteria || acceptanceCriteria;
       const promptList = res.data?.prompts || [];
       setAcceptanceCriteria(criteria);
-      setPrompts(promptList.map((p: any, i: number) => ({
+      setPromptRunId(res.data?.prompt_run_id || null);
+      const mapped = promptList.map((p: any, i: number) => ({
         index: i,
         angle_name: p.angle_name || `图片${i + 1}`,
         prompt: p.prompt || '',
-      })));
+      }));
+      setPrompts(mapped);
+      setStudioTaskStatus('prompts_ready');
       setCurrentStep(3);
       const src = res.data?.prompt_source;
       const slug = res.data?.agent_slug || 'lookbook_prompt_agent_v1';
@@ -223,12 +445,20 @@ const LookbookStudio: React.FC = () => {
       message.warning('请先完成素材选择和提示词生成');
       return;
     }
+    if (!studioTaskId) {
+      message.warning('请先新建或打开任务');
+      return;
+    }
     setGenerating(true);
+    setStudioTaskStatus('generating');
     setTaskStatus('generating');
     setTaskProgress(8);
     setCurrentStep(4);
     try {
+      await persistStudioTask({ status: 'generating', prompts });
       const res = await generateLookbook({
+        studio_task_id: studioTaskId,
+        prompt_run_id: promptRunId || undefined,
         model_id: selectedModel.id,
         clothing_ids: selectedClothing.map((c) => c.id),
         reference_id: selectedReference?.id || '',
@@ -240,10 +470,12 @@ const LookbookStudio: React.FC = () => {
         business_context: businessContext,
       });
       setGeneratedImages(res.data.images || []);
+      setStudioTaskStatus('completed');
       setTaskStatus('completed');
       setTaskProgress(100);
-      message.success('Seedream 生图完成，可在「历史任务」查看');
+      message.success('Seedream 生图完成');
     } catch (e: any) {
+      setStudioTaskStatus('failed');
       setTaskStatus('failed');
       message.error('生图失败: ' + (e.response?.data?.detail || e.message));
     } finally {
@@ -275,17 +507,12 @@ const LookbookStudio: React.FC = () => {
   };
 
   const resetAll = () => {
-    setCurrentStep(0);
-    setSelectedModel(null);
-    setSelectedClothing([]);
-    setSelectedReference(null);
-    setSelectedScene(null);
-    setPrompts([]);
-    setAcceptanceCriteria('');
-    setGeneratedImages([]);
-    setTaskStatus('');
-    setTaskProgress(0);
-    loadedSectionsRef.current.clear();
+    backToList();
+  };
+
+  const updatePrompt = (index: number, text: string) => {
+    setPrompts((prev) => prev.map((p) => (p.index === index ? { ...p, prompt: text } : p)));
+    scheduleSave();
   };
 
   const renderImageCard = (
@@ -507,18 +734,27 @@ const LookbookStudio: React.FC = () => {
 
   const renderStep3 = () => (
     <div>
-      <h3>确认验收标准与提示词</h3>
+      <h3>{isEditable ? '编辑提示词' : '提示词（只读）'}</h3>
       <Card size="small" title="验收标准" style={{ marginBottom: 16 }}>
-        <TextArea rows={7} value={acceptanceCriteria} onChange={(e) => setAcceptanceCriteria(e.target.value)} />
+        <TextArea
+          rows={4}
+          value={acceptanceCriteria}
+          readOnly={!isEditable}
+          onChange={(e) => {
+            setAcceptanceCriteria(e.target.value);
+            scheduleSave();
+          }}
+        />
       </Card>
       <Row gutter={[16, 16]}>
         {prompts.map((item) => (
           <Col span={12} key={item.index}>
-            <Card size="small" title={<Space><EditOutlined />{item.angle_name}</Space>}>
+            <Card size="small" title={<Space><EyeOutlined />{item.angle_name}</Space>}>
               <TextArea
                 rows={7}
                 value={item.prompt}
-                onChange={(e) => setPrompts((prev) => prev.map((p) => p.index === item.index ? { ...p, prompt: e.target.value } : p))}
+                readOnly={!isEditable}
+                onChange={(e) => updatePrompt(item.index, e.target.value)}
               />
             </Card>
           </Col>
@@ -526,8 +762,16 @@ const LookbookStudio: React.FC = () => {
       </Row>
       <div style={{ marginTop: 24, textAlign: 'center' }}>
         <Space>
-          <Button onClick={() => goToStep(2)}>上一步</Button>
-          <Button icon={<RocketOutlined />} type="primary" loading={generating} onClick={handleStartGeneration}>点击生图</Button>
+          <Button onClick={() => goToStep(2)} disabled={!isEditable}>上一步</Button>
+          <Button
+            icon={<RocketOutlined />}
+            type="primary"
+            loading={generating}
+            disabled={!canGenerate}
+            onClick={handleStartGeneration}
+          >
+            点击生图
+          </Button>
         </Space>
       </div>
     </div>
@@ -542,7 +786,19 @@ const LookbookStudio: React.FC = () => {
           <Progress percent={taskProgress} status="active" style={{ maxWidth: 420, margin: '20px auto' }} />
         </div>
       )}
-      {taskStatus === 'failed' && <Alert message="生成失败，请检查火山 Seedream 配置或重试" type="error" showIcon style={{ marginBottom: 16 }} />}
+      {taskStatus === 'failed' && (
+        <Alert
+          message="生成失败，请检查火山 Seedream 配置或修改提示词后重试"
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          action={isEditable && prompts.length > 0 ? (
+            <Button size="small" onClick={() => { setStudioTaskStatus('prompts_ready'); setCurrentStep(3); }}>
+              返回编辑
+            </Button>
+          ) : undefined}
+        />
+      )}
       {generatedImages.length > 0 && (
         <>
           <Alert
@@ -592,7 +848,7 @@ const LookbookStudio: React.FC = () => {
             ))}
           </Row>
           <div style={{ marginTop: 24, textAlign: 'center' }}>
-            <Button type="primary" onClick={resetAll}>生成新的Lookbook</Button>
+            <Button type="primary" onClick={resetAll}>返回任务列表</Button>
           </div>
         </>
       )}
@@ -607,8 +863,27 @@ const LookbookStudio: React.FC = () => {
     { title: '结果验收', icon: <RocketOutlined /> },
   ];
 
+  if (viewMode === 'list') {
+    return (
+      <StudioTaskList
+        tasks={studioTasks}
+        loading={tasksLoading}
+        onNew={handleNewTask}
+        onOpen={openTask}
+      />
+    );
+  }
+
   return (
     <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <Button icon={<ArrowLeftOutlined />} onClick={backToList}>返回任务列表</Button>
+        {studioTaskStatus && (
+          <Tag color={studioTaskStatus === 'prompts_ready' ? 'processing' : studioTaskStatus === 'completed' ? 'success' : 'default'}>
+            {STATUS_LABEL[studioTaskStatus] || studioTaskStatus}
+          </Tag>
+        )}
+      </div>
       <Steps current={currentStep} items={steps} style={{ marginBottom: 32 }} />
       <Spin spinning={materialsLoading && currentStep < 4} tip="加载素材中...">
         {currentStep === 0 && renderStep0()}

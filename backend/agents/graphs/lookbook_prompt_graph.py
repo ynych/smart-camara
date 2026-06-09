@@ -129,15 +129,22 @@ async def node_assemble_pipeline(state: PromptAgentState) -> PromptAgentState:
             hctx.constraint_text = (hctx.constraint_text + "\n知识检索：" + extra).strip()
 
     from database import SessionLocal
+    from domains.workflow.pack_merge import merge_pack_into_pipeline
 
     db = SessionLocal()
     try:
         pipeline = _load_pipeline(agent.get("pipeline_config_id"), db)
+        overlay = inputs.get("pack_overlay") or {}
+        techniques = overlay.get("techniques") or {}
+        if techniques:
+            pipeline = merge_pack_into_pipeline(pipeline, techniques)
         result = run_pipeline(hctx, pipeline=pipeline, include_regen=False)
     finally:
         db.close()
 
     trace.append({"step": "assemble_pipeline", "modules": len(result.get("modules") or [])})
+    if overlay := inputs.get("pack_overlay"):
+        trace.append({"step": "pack_overlay", "pack_id": overlay.get("pack_id")})
     return {**state, "pipeline_result": result, "trace": trace}
 
 

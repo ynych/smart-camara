@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE = 'http://127.0.0.1:8155';
+import { API_BASE } from '../utils/apiBase';
+
 const adminApi = axios.create({ baseURL: API_BASE });
 
 export const adminList = (path: string) => adminApi.get(path).then((r) => r.data.items ?? r.data);

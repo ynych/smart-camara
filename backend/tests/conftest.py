@@ -18,9 +18,8 @@ def user_ctx_minimal():
         "selection": {"model_id": "m1", "clothing_ids": ["c1"]},
         "quantity": 2,
         "prompt_result": {
-            "prompt_source": "llm",
+            "prompt_run_id": "run-1",
             "prompts": [{"prompt": "a"}, {"prompt": "b"}],
-            "llm_error": None,
         },
         "generation_result": {"task_id": "t1", "images": [{"id": "i1"}]},
         "evaluation": {"overall": "good", "scores": {"构图": 5}},

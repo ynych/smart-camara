@@ -319,3 +319,91 @@ class AgentRun(Base):
     duration_ms = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PromptGenerationPack(Base):
+    """提示词生成包 — 场景 × 需求 × 优化技术。"""
+    __tablename__ = "prompt_generation_packs"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    slug = Column(String(100), nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    scenario_json = Column(Text)
+    user_needs_json = Column(Text)
+    techniques_json = Column(Text)
+    harness_pipeline_slug = Column(String(100), default="lookbook_v1")
+    status = Column(String(20), default="draft")  # draft / published / archived
+    version = Column(Integer, default=1)
+    parent_id = Column(String(36))
+    skill_version_id = Column(String(100))
+    published_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class WorkflowDefinition(Base):
+    """生产 Workflow 定义（Admin 编辑，publish 后 pin）。"""
+    __tablename__ = "workflow_definitions"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workflow_id = Column(String(100), unique=True, nullable=False)
+    name = Column(String(200), nullable=False)
+    description = Column(Text)
+    steps_json = Column(Text)
+    graph_ref = Column(String(100))
+    status = Column(String(20), default="published")
+    version = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProductionManifest(Base):
+    """生产 manifest — pin workflow / pack / skill 版本。"""
+    __tablename__ = "production_manifests"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    slug = Column(String(100), unique=True, nullable=False)
+    workflow_id = Column(String(100), nullable=False)
+    default_pack_id = Column(String(36))
+    default_pack_slug = Column(String(100))
+    pack_version_pin_json = Column(Text)
+    skill_version_id = Column(String(100))
+    fallback_skill_version_id = Column(String(100))
+    harness_pipeline_slug = Column(String(100))
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PromptRunRecord(Base):
+    """U3 预览 / Admin dry-run 的 prompt 运行记录（不可变）。"""
+    __tablename__ = "prompt_run_records"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    pack_id = Column(String(36), index=True)
+    pack_version = Column(Integer)
+    inputs_json = Column(Text)
+    prompts_json = Column(Text)
+    acceptance_criteria = Column(Text)
+    source = Column(String(50))  # user_preview / admin_dry_run / testcase
+    workflow_version = Column(String(100))
+    agent_run_id = Column(String(36))
+    studio_task_id = Column(String(36), index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class LookbookStudioTask(Base):
+    """用户工作台生图任务（选片 → 提示词 → 生图）。"""
+    __tablename__ = "lookbook_studio_tasks"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    title = Column(String(200))
+    status = Column(String(20), default="draft")  # draft | prompts_ready | generating | completed | failed
+    model_id = Column(String(36))
+    model_name = Column(String(200))
+    clothing_ids_json = Column(Text)
+    reference_id = Column(String(36))
+    scene_id = Column(String(36))
+    size = Column(String(20), default="3:4")
+    quantity = Column(Integer, default=4)
+    business_context_json = Column(Text)
+    acceptance_criteria = Column(Text)
+    prompts_json = Column(Text)
+    prompt_run_id = Column(String(36))
+    lookbook_task_id = Column(String(36))
+    error_message = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

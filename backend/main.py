@@ -20,6 +20,7 @@ from routers.admin import (
     tool_defs_router,
 )
 from routers import lookbook, config, materials, harness, agent_runtime, harness_runtime, pipeline_versions, health
+from routers import generation_packs, workflow_admin
 
 # 加载 .env 文件
 from pathlib import Path
@@ -37,6 +38,8 @@ async def lifespan(app: FastAPI):
     _backfill_materials()
     from services.seed_admin_data import seed_admin_data
     seed_admin_data()
+    from services.seed_workflow_data import seed_workflow_data
+    seed_workflow_data()
     yield
 
 def _backfill_materials():
@@ -77,6 +80,7 @@ def migrate_db():
         ("harness_test_cases", "source_image_id", "VARCHAR(36)"),
         ("harness_test_cases", "source_evaluation_id", "VARCHAR(36)"),
         ("harness_test_cases", "human_eval_json", "TEXT"),
+        ("prompt_run_records", "studio_task_id", "VARCHAR(36)"),
     ]
     for table, column, col_type in migrations:
         try:
@@ -85,6 +89,9 @@ def migrate_db():
             pass  # 列已存在，忽略
     conn.commit()
     conn.close()
+    # 补齐 ORM 新增表（如 lookbook_studio_tasks）
+    from models import LookbookStudioTask  # noqa: F401
+    Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="私人摄影团队 MVP",
@@ -123,6 +130,8 @@ app.include_router(agent_runtime.router)
 app.include_router(harness_runtime.router)
 app.include_router(pipeline_versions.router)
 app.include_router(health.router)
+app.include_router(generation_packs.router)
+app.include_router(workflow_admin.router)
 
 # 静态文件
 os.makedirs(ASSETS_DIR, exist_ok=True)

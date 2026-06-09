@@ -1,7 +1,8 @@
 import React from 'react';
-import { Button, Layout, Menu, Typography } from 'antd';
+import { Button, Layout, Menu, Space, Typography } from 'antd';
 import { CameraOutlined, FolderOutlined, PictureOutlined, SettingOutlined } from '@ant-design/icons';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { logout } from '../utils/auth';
 
 const { Header, Sider, Content } = Layout;
 const { Title } = Typography;
@@ -32,7 +33,10 @@ const MainLayout: React.FC = () => {
       <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: 'margin-left 0.2s' }}>
         <Header style={{ padding: '0 24px', background: '#fff', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
           <Title level={4} style={{ margin: 0 }}>私人摄影团队 MVP</Title>
-          <Link to="/admin/conversations"><Button type="primary" ghost>管理后台</Button></Link>
+          <Space>
+            <Link to="/admin/conversations"><Button type="primary" ghost>管理后台</Button></Link>
+            <Button onClick={() => { logout(); navigate('/login'); }}>退出</Button>
+          </Space>
         </Header>
         <Content style={{ margin: 24, padding: 24, background: '#fff', borderRadius: 8, minHeight: 'calc(100vh - 56px - 48px)' }}>
           <Outlet />

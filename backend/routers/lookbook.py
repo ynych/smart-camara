@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import json
 import os
 import uuid
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query, Body
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Requirement, LookbookTask, StyleTemplate, GeneratedImage
+from models import Requirement, LookbookTask, StyleTemplate, GeneratedImage, LookbookStudioTask
 from skills.lookbook_skill import LookbookSkill
 from tools.file_tool import FileTool
 from tools.material_tool import MaterialTool
@@ -174,95 +176,165 @@ def get_styles(db: Session = Depends(get_db)):
         ]
     }
 
+# ---------- 生图工作台任务 ----------
+
+@router.get("/studio-tasks")
+def list_studio_tasks(db: Session = Depends(get_db)):
+    from domains.user.studio_task import list_studio_tasks as _list
+
+    return {"tasks": _list(db)}
+
+
+@router.post("/studio-tasks")
+def create_studio_task(data: dict | None = None, db: Session = Depends(get_db)):
+    from domains.user.studio_task import create_studio_task as _create
+
+    try:
+        task = _create(db, data or {})
+        db.commit()
+        return task
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(400, str(e)) from e
+
+
+@router.get("/studio-tasks/{task_id}")
+def get_studio_task_detail(task_id: str, db: Session = Depends(get_db)):
+    from domains.user.studio_task import get_studio_task
+
+    task = get_studio_task(db, task_id)
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    return task
+
+
+@router.patch("/studio-tasks/{task_id}")
+def patch_studio_task(
+    task_id: str,
+    data: dict = Body(...),
+    db: Session = Depends(get_db),
+):
+    from domains.user.studio_task import update_studio_task
+
+    try:
+        task = update_studio_task(db, task_id, data)
+        db.commit()
+        return task
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(400, str(e)) from e
+
+
 @router.post("/generate-prompt")
 async def generate_prompt(data: dict, db: Session = Depends(get_db)):
-    """预生成 prompt 列表（LangGraph Agent，失败回退 Harness）。"""
-    from data.services import AgentDefinitionService
-    from agents.graphs.lookbook_prompt_graph import run_prompt_agent
-    from services.seed_admin_data import BUILTIN_AGENT_SLUG
-    import json as _json
+    """U3：Workflow 预览 prompts，落 prompt_run_record。"""
+    from domains.user.studio_task import apply_prompt_preview, get_studio_task, update_studio_task
+    from domains.workflow.runner import run_workflow_preview
 
-    model_id = data.get("model_id")
-    clothing_ids = data.get("clothing_ids", [])
-    reference_id = data.get("reference_id")
-    scene_id = data.get("scene_id")
-    quantity = data.get("quantity", 4)
-    size = data.get("size", "3:4")
-    business_context = data.get("business_context") or {}
-    acceptance_criteria = data.get("acceptance_criteria") or ""
-
+    studio_task_id = data.get("studio_task_id")
     try:
-        criteria = acceptance_criteria or skill.build_acceptance_criteria(
-            size=size,
-            quantity=quantity,
-            business_context=business_context,
-        )
-        agent_svc = AgentDefinitionService(db)
-        rows = agent_svc.list_all()
-        agent_row = next((r for r in rows if r.get("slug") == BUILTIN_AGENT_SLUG), rows[0] if rows else None)
-        if not agent_row:
-            prompts, prompt_source, llm_error = await skill.build_prompts_async(
-                model_id, clothing_ids, reference_id, quantity, size=size,
-                scene_id=scene_id, business_context=business_context, acceptance_criteria=criteria,
-            )
-            return {"prompts": prompts, "acceptance_criteria": criteria, "prompt_source": prompt_source, "llm_error": llm_error}
+        if studio_task_id and not get_studio_task(db, studio_task_id):
+            raise HTTPException(404, "工作台任务不存在")
 
-        tool_ids = agent_row.get("tool_ids_json")
-        if isinstance(tool_ids, str):
-            tool_ids = _json.loads(tool_ids)
-        agent_config = {
-            "pipeline_config_id": agent_row.get("pipeline_config_id"),
-            "tool_ids": tool_ids or [],
-            "knowledge_tree_id": agent_row.get("knowledge_tree_id"),
-        }
-        inputs = {
-            "model_id": model_id,
-            "clothing_ids": clothing_ids,
-            "reference_id": reference_id,
-            "scene_id": scene_id,
-            "size": size,
-            "quantity": quantity,
-            "business_context": business_context,
-            "acceptance_criteria": criteria,
-        }
-        result = await run_prompt_agent(
-            inputs,
-            agent_config,
+        result = await run_workflow_preview(
+            data,
+            source="user_preview",
             session_id=data.get("session_id") or data.get("langfuse_session_id"),
             user_id="workbench",
-            ref_type="workbench",
+            include_user_trace=False,
+            studio_task_id=studio_task_id,
         )
+        if studio_task_id:
+            apply_prompt_preview(db, studio_task_id, result)
+            db.commit()
         return {
-            "prompts": result.get("prompts") or [],
-            "acceptance_criteria": criteria,
-            "prompt_source": result.get("source"),
-            "agent_slug": agent_row.get("slug"),
-            "agent_id": agent_row.get("id"),
-            "llm_error": result.get("llm_error"),
-            "trace": result.get("trace"),
-            "run_id": result.get("run_id"),
-            "session_id": result.get("session_id"),
+            **result,
+            "prompt_source": result.get("prompt_source"),
+            "studio_task_id": studio_task_id,
         }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 @router.post("/generate")
-async def generate_lookbook(data: dict):
-    """开始生成Lookbook"""
-    requirement_id = data.get("requirement_id")
-    quantity = data.get("quantity", 4)
-    reference_image_path = data.get("reference_image_path")
+async def generate_lookbook(data: dict, db: Session = Depends(get_db)):
+    """U4：确认生图（inline prompts 优先，支持 studio_task_id）。"""
+    from domains.user.studio_task import get_studio_task, update_studio_task
+    from domains.workflow.records import get_prompt_run_record
 
+    studio_task_id = data.get("studio_task_id")
     try:
-        if data.get("model_id") or data.get("clothing_ids"):
-            result = await skill.generate_from_selection(data)
+        merged = dict(data)
+        if studio_task_id:
+            st = get_studio_task(db, studio_task_id)
+            if not st:
+                raise HTTPException(404, "工作台任务不存在")
+            if st["status"] == "completed":
+                raise HTTPException(400, "任务已完成")
+            merged.setdefault("model_id", st.get("model_id"))
+            merged.setdefault("clothing_ids", st.get("clothing_ids"))
+            merged.setdefault("reference_id", st.get("reference_id"))
+            merged.setdefault("scene_id", st.get("scene_id"))
+            merged.setdefault("size", st.get("size"))
+            merged.setdefault("acceptance_criteria", st.get("acceptance_criteria"))
+            merged.setdefault("business_context", st.get("business_context"))
+            if not merged.get("prompts"):
+                merged["prompts"] = st.get("prompts") or []
+
+        if merged.get("prompts"):
+            pass
+        elif merged.get("prompt_run_id"):
+            record = get_prompt_run_record(db, merged["prompt_run_id"])
+            if not record:
+                raise HTTPException(status_code=404, detail="prompt_run_id 不存在")
+            inputs = record.get("inputs_json") or {}
+            merged = {
+                **inputs,
+                **merged,
+                "prompts": record.get("prompts_json") or [],
+                "acceptance_criteria": merged.get("acceptance_criteria") or record.get("acceptance_criteria") or "",
+            }
+
+        if studio_task_id:
+            update_studio_task(db, studio_task_id, {"status": "generating", "prompts": merged.get("prompts") or []})
+
+        if merged.get("model_id") or merged.get("clothing_ids"):
+            result = await skill.generate_from_selection(merged)
         else:
+            requirement_id = merged.get("requirement_id")
             if not requirement_id:
-                raise HTTPException(status_code=400, detail="缺少requirement_id")
-            result = await skill.generate(requirement_id, quantity=quantity, reference_image_path=reference_image_path)
-        return {"message": "生成完成", "task_id": result["task_id"], "images": result["images"]}
+                raise HTTPException(status_code=400, detail="缺少 requirement_id 或素材")
+            result = await skill.generate(
+                requirement_id,
+                quantity=merged.get("quantity", 4),
+                reference_image_path=merged.get("reference_image_path"),
+            )
+
+        if studio_task_id:
+            update_studio_task(db, studio_task_id, {
+                "status": "completed",
+                "lookbook_task_id": result.get("task_id"),
+                "prompts": merged.get("prompts") or [],
+                "error_message": None,
+            })
+            db.commit()
+
+        return {"message": "生成完成", "task_id": result["task_id"], "images": result["images"], "studio_task_id": studio_task_id}
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        if studio_task_id:
+            try:
+                update_studio_task(db, studio_task_id, {"status": "failed", "error_message": str(e)})
+                db.commit()
+            except Exception:
+                db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 @router.get("/tasks")
 def get_tasks(status: str = Query(None), db: Session = Depends(get_db)):

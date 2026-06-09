@@ -37,23 +37,32 @@ def check_u2_selection(ctx: dict[str, Any]) -> CheckResult:
     )
 
 
-def check_u3_prompts(ctx: dict[str, Any]) -> CheckResult:
+def check_u3_prompt_preview(ctx: dict[str, Any]) -> CheckResult:
     pr = ctx.get("prompt_result") or {}
-    source = pr.get("prompt_source") or pr.get("source")
     prompts = pr.get("prompts") or []
+    prompt_run_id = pr.get("prompt_run_id")
     quantity = int(ctx.get("quantity") or pr.get("quantity") or 1)
-    llm_err = pr.get("llm_error")
-    ok = source == "llm" and len(prompts) >= quantity and not llm_err
-    msg = "LLM 提示词就绪" if ok else f"提示词未达标 source={source} count={len(prompts)}"
+    ok = bool(prompt_run_id) and len(prompts) >= quantity
+    return _result(
+        "U3_prompt_preview",
+        CheckDomain.USER,
+        ok,
+        "预览 prompts 就绪且已落 prompt_run_record" if ok else "缺少 prompt_run_id 或 prompts 不足",
+        prompt_run_id=prompt_run_id,
+        prompt_count=len(prompts),
+        quantity=quantity,
+    )
+
+
+def check_u3_prompts(ctx: dict[str, Any]) -> CheckResult:
+    """兼容旧 ID — 等同 U3_prompt_preview。"""
+    r = check_u3_prompt_preview(ctx)
     return _result(
         "U3_prompts",
         CheckDomain.USER,
-        ok,
-        msg,
-        prompt_source=source,
-        prompt_count=len(prompts),
-        quantity=quantity,
-        llm_error=llm_err,
+        r.passed,
+        r.message,
+        **{k: v for k, v in r.details.items()},
     )
 
 

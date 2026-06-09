@@ -14,6 +14,12 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     set +a
 fi
 
+# 优先使用项目虚拟环境
+if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    source "$SCRIPT_DIR/.venv/bin/activate"
+fi
+
 # 创建日志目录
 mkdir -p "$LOG_DIR"
 
@@ -70,9 +76,9 @@ start_services() {
     cd "$SCRIPT_DIR/backend" || { echo "      ✗ 后端目录不存在: $SCRIPT_DIR/backend"; exit 1; }
     
     # 初始化数据库
-    python3 -c "from database import engine, Base; from models import *; Base.metadata.create_all(bind=engine)" 2>/dev/null
+    python3 -c "from database import engine, Base; from models import *; from models import LookbookStudioTask; Base.metadata.create_all(bind=engine)" 2>/dev/null
     
-    nohup uvicorn main:app --host 0.0.0.0 --port 8155 > "$LOG_DIR/backend.log" 2>&1 &
+    nohup python3 -m uvicorn main:app --host 0.0.0.0 --port 8155 > "$LOG_DIR/backend.log" 2>&1 &
     BACKEND_PID=$!
     echo "backend:$BACKEND_PID" >> "$PID_FILE"
     
@@ -88,20 +94,10 @@ start_services() {
     echo "      启动前端服务 (端口: 8150)..."
     cd "$SCRIPT_DIR/frontend" || { echo "      ✗ 前端目录不存在: $SCRIPT_DIR/frontend"; exit 1; }
     
-    # 检查并安装依赖
-    if [ ! -d "node_modules" ] || [ ! -d "node_modules/vite" ]; then
+    # 检测 rolldown 兼容性问题并自动修复（仅当 vite 不可用时）
+    if [ ! -x "node_modules/.bin/vite" ]; then
         echo "      安装前端依赖..."
-        # 清理可能损坏的node_modules
         rm -rf node_modules package-lock.json 2>/dev/null
-        npm install 2>&1 | tail -5
-    fi
-    
-    # 检测 rolldown 兼容性问题并自动修复
-    ROLLDOWN_ERROR=false
-    node -e "require('rolldown')" 2>/dev/null || ROLLDOWN_ERROR=true
-    if [ "$ROLLDOWN_ERROR" = true ]; then
-        echo "      检测到 rolldown 兼容性问题，重新安装依赖..."
-        rm -rf node_modules package-lock.json
         npm install 2>&1 | tail -5
     fi
     

@@ -4,6 +4,7 @@ from domains.checks.registry import run_suite
 from domains.checks.user_journey import (
     check_u1_materials,
     check_u2_selection,
+    check_u3_prompt_preview,
     check_u3_prompts,
     check_u4_generation,
     check_u5_evaluation,
@@ -21,12 +22,17 @@ def test_u1_fails_when_empty():
     assert not r.passed
 
 
-def test_u3_requires_llm_source(user_ctx_minimal):
-    r = check_u3_prompts(user_ctx_minimal)
+def test_u3_requires_prompt_run_id(user_ctx_minimal):
+    r = check_u3_prompt_preview(user_ctx_minimal)
     assert r.passed
+    assert r.id == "U3_prompt_preview"
 
-    bad = {**user_ctx_minimal, "prompt_result": {"prompt_source": "harness", "prompts": []}}
-    assert not check_u3_prompts(bad).passed
+    bad = {**user_ctx_minimal, "prompt_result": {"prompts": [{"prompt": "x"}]}}
+    assert not check_u3_prompt_preview(bad).passed
+
+    alias = check_u3_prompts(user_ctx_minimal)
+    assert alias.passed
+    assert alias.id == "U3_prompts"
 
 
 def test_user_journey_suite_ok(user_ctx_minimal):

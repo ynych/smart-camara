@@ -35,6 +35,8 @@ const AdminLayout: React.FC = () => {
       icon: <ExperimentOutlined />,
       label: 'Harness',
       children: [
+        { key: '/admin/harness/generation-packs', label: 'Generation Packs' },
+        { key: '/admin/harness/workflows', label: 'Workflows' },
         { key: '/admin/harness/testcases', label: 'TestCases' },
         { key: '/admin/harness/versions', icon: <SwapOutlined />, label: 'Versions' },
         { key: '/admin/harness/pipeline', icon: <ApartmentOutlined />, label: 'Pipeline' },
