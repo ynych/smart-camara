@@ -182,20 +182,29 @@ def get_styles(db: Session = Depends(get_db)):
 def list_studio_tasks(db: Session = Depends(get_db)):
     from domains.user.studio_task import list_studio_tasks as _list
 
-    return {"tasks": _list(db)}
+    try:
+        return {"tasks": _list(db)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"加载任务列表失败: {e}") from e
 
 
 @router.post("/studio-tasks")
-def create_studio_task(data: dict | None = None, db: Session = Depends(get_db)):
+def create_studio_task(
+    data: dict = Body(default_factory=dict),
+    db: Session = Depends(get_db),
+):
     from domains.user.studio_task import create_studio_task as _create
 
     try:
-        task = _create(db, data or {})
+        task = _create(db, data)
         db.commit()
         return task
     except ValueError as e:
         db.rollback()
-        raise HTTPException(400, str(e)) from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"创建任务失败: {e}") from e
 
 
 @router.get("/studio-tasks/{task_id}")
