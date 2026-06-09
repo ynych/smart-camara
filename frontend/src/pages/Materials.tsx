@@ -6,6 +6,7 @@ import {
 import { UploadOutlined, DeleteOutlined, UserOutlined, SkinOutlined, PictureOutlined } from '@ant-design/icons';
 import { uploadMaterials, deleteMaterial, getGroupedMaterials } from '../services/api';
 import { toMediaUrl, mediaPreview } from '../utils/mediaUrl';
+import { apiErrorMessage } from '../utils/apiError';
 
 const SHOOT_TYPES = ['人台图', '平铺图', '时尚拍摄'];
 
@@ -41,8 +42,8 @@ const Materials: React.FC = () => {
       } else if (activeTab === 'lookbook_refs') params.sections = 'refs';
       const res = await getGroupedMaterials(params);
       setGroupedData(res.data || {});
-    } catch {
-      message.error('加载素材失败');
+    } catch (e) {
+      message.error(apiErrorMessage(e, '加载素材失败'));
     } finally {
       setLoading(false);
     }

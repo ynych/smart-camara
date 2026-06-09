@@ -14,7 +14,27 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     set +a
 fi
 
-# 优先使用项目虚拟环境
+# 优先使用项目虚拟环境（启动前由 ensure_backend_env 保证可用）
+PYTHON=python3
+
+ensure_backend_env() {
+    if [ ! -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+        echo "      创建 Python 虚拟环境 (.venv)..."
+        if ! python3 -m venv "$SCRIPT_DIR/.venv"; then
+            echo "      ✗ 无法创建虚拟环境，请确认已安装 python3"
+            exit 1
+        fi
+    fi
+    PYTHON="$SCRIPT_DIR/.venv/bin/python"
+    if ! "$PYTHON" -m uvicorn --version > /dev/null 2>&1; then
+        echo "      安装后端依赖..."
+        if ! "$PYTHON" -m pip install -q -r "$SCRIPT_DIR/backend/requirements.txt"; then
+            echo "      ✗ 后端依赖安装失败，请检查 network 或 requirements.txt"
+            exit 1
+        fi
+    fi
+}
+
 if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
     # shellcheck disable=SC1091
     source "$SCRIPT_DIR/.venv/bin/activate"
@@ -71,23 +91,33 @@ start_services() {
     
     > "$PID_FILE"
     
+    ensure_backend_env
+    
     # 启动后端
     echo "      启动后端服务 (端口: 8155)..."
     cd "$SCRIPT_DIR/backend" || { echo "      ✗ 后端目录不存在: $SCRIPT_DIR/backend"; exit 1; }
     
     # 初始化数据库
-    python3 -c "from database import engine, Base; from models import *; from models import LookbookStudioTask; Base.metadata.create_all(bind=engine)" 2>/dev/null
+    $PYTHON -c "from database import engine, Base; from models import *; from models import LookbookStudioTask; Base.metadata.create_all(bind=engine)" 2>/dev/null
     
-    nohup python3 -m uvicorn main:app --host 0.0.0.0 --port 8155 > "$LOG_DIR/backend.log" 2>&1 &
+    nohup $PYTHON -m uvicorn main:app --host 0.0.0.0 --port 8155 > "$LOG_DIR/backend.log" 2>&1 &
     BACKEND_PID=$!
     echo "backend:$BACKEND_PID" >> "$PID_FILE"
     
-    sleep 3
-    if curl -s http://localhost:8155/ > /dev/null; then
+    BACKEND_OK=false
+    for _ in 1 2 3 4 5 6 7 8; do
+        sleep 1
+        if curl -s http://127.0.0.1:8155/ > /dev/null 2>&1; then
+            BACKEND_OK=true
+            break
+        fi
+    done
+    if [ "$BACKEND_OK" = true ]; then
         echo "      ✓ 后端服务启动成功 (PID: $BACKEND_PID)"
     else
         echo "      ✗ 后端服务启动失败"
         echo "      日志: $LOG_DIR/backend.log"
+        tail -5 "$LOG_DIR/backend.log" 2>/dev/null | sed 's/^/        /'
     fi
     
     # 启动前端
@@ -106,7 +136,7 @@ start_services() {
     echo "frontend:$FRONTEND_PID" >> "$PID_FILE"
     
     sleep 5
-    if curl -s http://localhost:8150/ > /dev/null; then
+    if curl -s http://127.0.0.1:8150/ > /dev/null; then
         echo "      ✓ 前端服务启动成功 (PID: $FRONTEND_PID)"
     else
         echo "      ⚠ 前端服务启动中，可能需要更长时间..."
@@ -121,14 +151,14 @@ show_status() {
     BACKEND_RUNNING=false
     FRONTEND_RUNNING=false
     
-    if curl -s http://localhost:8155/ > /dev/null 2>&1; then
+    if curl -s http://127.0.0.1:8155/ > /dev/null 2>&1; then
         echo "      ✓ 后端服务: 运行中 (http://localhost:8155)"
         BACKEND_RUNNING=true
     else
         echo "      ✗ 后端服务: 未运行"
     fi
     
-    if curl -s http://localhost:8150/ > /dev/null 2>&1; then
+    if curl -s http://127.0.0.1:8150/ > /dev/null 2>&1; then
         echo "      ✓ 前端服务: 运行中 (http://localhost:8150)"
         FRONTEND_RUNNING=true
     else

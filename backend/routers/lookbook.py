@@ -5,7 +5,7 @@ import os
 import uuid
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query, Body
 from sqlalchemy.orm import Session
-from database import get_db
+from database import get_db, SessionLocal
 from models import Requirement, LookbookTask, StyleTemplate, GeneratedImage, LookbookStudioTask
 from skills.lookbook_skill import LookbookSkill
 from tools.file_tool import FileTool
@@ -270,14 +270,16 @@ async def generate_prompt(data: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 @router.post("/generate")
-async def generate_lookbook(data: dict, db: Session = Depends(get_db)):
+async def generate_lookbook(data: dict):
     """U4：确认生图（inline prompts 优先，支持 studio_task_id）。"""
     from domains.user.studio_task import get_studio_task, update_studio_task
     from domains.workflow.records import get_prompt_run_record
 
     studio_task_id = data.get("studio_task_id")
+    merged = dict(data)
+
+    db = SessionLocal()
     try:
-        merged = dict(data)
         if studio_task_id:
             st = get_studio_task(db, studio_task_id)
             if not st:
@@ -294,9 +296,7 @@ async def generate_lookbook(data: dict, db: Session = Depends(get_db)):
             if not merged.get("prompts"):
                 merged["prompts"] = st.get("prompts") or []
 
-        if merged.get("prompts"):
-            pass
-        elif merged.get("prompt_run_id"):
+        if not merged.get("prompts") and merged.get("prompt_run_id"):
             record = get_prompt_run_record(db, merged["prompt_run_id"])
             if not record:
                 raise HTTPException(status_code=404, detail="prompt_run_id 不存在")
@@ -309,8 +309,22 @@ async def generate_lookbook(data: dict, db: Session = Depends(get_db)):
             }
 
         if studio_task_id:
-            update_studio_task(db, studio_task_id, {"status": "generating", "prompts": merged.get("prompts") or []})
+            update_studio_task(db, studio_task_id, {
+                "status": "generating",
+                "prompts": merged.get("prompts") or [],
+                "error_message": None,
+            })
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        db.close()
 
+    try:
         if merged.get("model_id") or merged.get("clothing_ids"):
             result = await skill.generate_from_selection(merged)
         else:
@@ -322,28 +336,42 @@ async def generate_lookbook(data: dict, db: Session = Depends(get_db)):
                 quantity=merged.get("quantity", 4),
                 reference_image_path=merged.get("reference_image_path"),
             )
-
+    except HTTPException:
+        raise
+    except Exception as e:
         if studio_task_id:
-            update_studio_task(db, studio_task_id, {
+            err_db = SessionLocal()
+            try:
+                update_studio_task(err_db, studio_task_id, {"status": "failed", "error_message": str(e)})
+                err_db.commit()
+            except Exception:
+                err_db.rollback()
+            finally:
+                err_db.close()
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if studio_task_id:
+        done_db = SessionLocal()
+        try:
+            update_studio_task(done_db, studio_task_id, {
                 "status": "completed",
                 "lookbook_task_id": result.get("task_id"),
                 "prompts": merged.get("prompts") or [],
                 "error_message": None,
             })
-            db.commit()
+            done_db.commit()
+        except Exception as e:
+            done_db.rollback()
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        finally:
+            done_db.close()
 
-        return {"message": "生成完成", "task_id": result["task_id"], "images": result["images"], "studio_task_id": studio_task_id}
-    except HTTPException:
-        db.rollback()
-        raise
-    except Exception as e:
-        if studio_task_id:
-            try:
-                update_studio_task(db, studio_task_id, {"status": "failed", "error_message": str(e)})
-                db.commit()
-            except Exception:
-                db.rollback()
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    return {
+        "message": "生成完成",
+        "task_id": result["task_id"],
+        "images": result["images"],
+        "studio_task_id": studio_task_id,
+    }
 
 @router.get("/tasks")
 def get_tasks(status: str = Query(None), db: Session = Depends(get_db)):

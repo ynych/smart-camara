@@ -49,6 +49,7 @@ import {
 } from '../services/api';
 import { toContentUrl } from '../utils/contentUrl';
 import { toMediaUrl } from '../utils/mediaUrl';
+import { apiErrorMessage } from '../utils/apiError';
 import ImageEvaluationModal from '../components/ImageEvaluationModal';
 import StudioTaskList, { type StudioTaskItem } from '../components/StudioTaskList';
 
@@ -115,6 +116,7 @@ const LookbookStudio: React.FC = () => {
   const [generatingPrompts, setGeneratingPrompts] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [taskStatus, setTaskStatus] = useState('');
+  const [generationError, setGenerationError] = useState('');
   const [taskProgress, setTaskProgress] = useState(0);
   const [generatedImages, setGeneratedImages] = useState<any[]>([]);
 
@@ -200,6 +202,7 @@ const LookbookStudio: React.FC = () => {
     setAcceptanceCriteria('');
     setGeneratedImages([]);
     setTaskStatus('');
+    setGenerationError('');
     setTaskProgress(0);
     setMerchantNeed('电商Lookbook效果图，用于商品详情页和投放素材');
     setTargetAudience('关注质感、通勤和日常穿搭的女性用户');
@@ -285,6 +288,7 @@ const LookbookStudio: React.FC = () => {
         }
       } else if (task.status === 'failed') {
         setTaskStatus('failed');
+        setGenerationError((task.error_message as string) || '');
       } else if (task.status === 'generating') {
         setTaskStatus('generating');
       }
@@ -330,8 +334,8 @@ const LookbookStudio: React.FC = () => {
       const res = await getGroupedMaterials({ sections });
       setMaterials((prev: Record<string, unknown>) => ({ ...prev, ...res.data }));
       loadedSectionsRef.current.add(sections);
-    } catch {
-      message.error('加载素材失败');
+    } catch (e) {
+      message.error(apiErrorMessage(e, '加载素材失败'));
     } finally {
       setMaterialsLoading(false);
     }
@@ -452,6 +456,7 @@ const LookbookStudio: React.FC = () => {
     setGenerating(true);
     setStudioTaskStatus('generating');
     setTaskStatus('generating');
+    setGenerationError('');
     setTaskProgress(8);
     setCurrentStep(4);
     try {
@@ -472,12 +477,15 @@ const LookbookStudio: React.FC = () => {
       setGeneratedImages(res.data.images || []);
       setStudioTaskStatus('completed');
       setTaskStatus('completed');
+      setGenerationError('');
       setTaskProgress(100);
       message.success('Seedream 生图完成');
     } catch (e: any) {
+      const detail = e.response?.data?.detail || e.message;
       setStudioTaskStatus('failed');
       setTaskStatus('failed');
-      message.error('生图失败: ' + (e.response?.data?.detail || e.message));
+      setGenerationError(typeof detail === 'string' ? detail : JSON.stringify(detail));
+      message.error('生图失败: ' + (typeof detail === 'string' ? detail : e.message));
     } finally {
       setGenerating(false);
     }
@@ -788,7 +796,14 @@ const LookbookStudio: React.FC = () => {
       )}
       {taskStatus === 'failed' && (
         <Alert
-          message="生成失败，请检查火山 Seedream 配置或修改提示词后重试"
+          message="生成失败"
+          description={
+            generationError.includes('database is locked')
+              ? '数据库繁忙（生图耗时较长导致锁冲突），请直接重试；若仍失败请运行 ./start.sh restart'
+              : generationError.includes('生图API') || generationError.includes('VOLCANO')
+                ? `${generationError}。请到「设置」页检查火山 Seedream 配置。`
+                : generationError || '请检查火山 Seedream 配置或修改提示词后重试'
+          }
           type="error"
           showIcon
           style={{ marginBottom: 16 }}
