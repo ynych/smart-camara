@@ -44,6 +44,50 @@ ensure_backend_env() {
     fi
 }
 
+FRONTEND_DIR="$SCRIPT_DIR/frontend"
+
+_frontend_deps_ok() {
+    [ -f "$FRONTEND_DIR/package.json" ] || return 1
+    [ -f "$FRONTEND_DIR/node_modules/vite/dist/node/cli.js" ] || return 1
+    (cd "$FRONTEND_DIR" && ./node_modules/.bin/vite --version > /dev/null 2>&1)
+}
+
+ensure_frontend_deps() {
+    if _frontend_deps_ok; then
+        return 0
+    fi
+
+    if [ -d "$FRONTEND_DIR/node_modules" ]; then
+        echo "      检测到无效前端依赖（可能由 rsync 从其他系统同步），正在重装..."
+        rm -rf "$FRONTEND_DIR/node_modules"
+    else
+        echo "      安装前端依赖 (frontend/)..."
+    fi
+
+    cd "$FRONTEND_DIR" || { echo "      ✗ 前端目录不存在: $FRONTEND_DIR"; exit 1; }
+
+    if [ -f package-lock.json ]; then
+        if ! npm ci --no-audit --no-fund 2>&1 | tail -8; then
+            echo "      npm ci 失败，尝试 npm install..."
+            rm -rf node_modules
+            if ! npm install --no-audit --no-fund 2>&1 | tail -8; then
+                echo "      ✗ 前端依赖安装失败，请在 frontend/ 目录执行 npm install"
+                exit 1
+            fi
+        fi
+    else
+        if ! npm install --no-audit --no-fund 2>&1 | tail -8; then
+            echo "      ✗ 前端依赖安装失败，请在 frontend/ 目录执行 npm install"
+            exit 1
+        fi
+    fi
+
+    if ! _frontend_deps_ok; then
+        echo "      ✗ 前端依赖仍不可用，请检查 Node.js 版本与磁盘空间"
+        exit 1
+    fi
+}
+
 if [ -f "$SCRIPT_DIR/.venv/bin/activate" ] && _venv_python_ok "$SCRIPT_DIR/.venv/bin/python"; then
     # shellcheck disable=SC1091
     source "$SCRIPT_DIR/.venv/bin/activate"
@@ -131,24 +175,27 @@ start_services() {
     
     # 启动前端
     echo "      启动前端服务 (端口: 8150)..."
-    cd "$SCRIPT_DIR/frontend" || { echo "      ✗ 前端目录不存在: $SCRIPT_DIR/frontend"; exit 1; }
-    
-    # 检测 rolldown 兼容性问题并自动修复（仅当 vite 不可用时）
-    if [ ! -x "node_modules/.bin/vite" ]; then
-        echo "      安装前端依赖..."
-        rm -rf node_modules package-lock.json 2>/dev/null
-        npm install 2>&1 | tail -5
-    fi
-    
+    ensure_frontend_deps
+    cd "$FRONTEND_DIR" || { echo "      ✗ 前端目录不存在: $FRONTEND_DIR"; exit 1; }
+
     nohup npm run dev -- --host --port 8150 > "$LOG_DIR/frontend.log" 2>&1 &
     FRONTEND_PID=$!
     echo "frontend:$FRONTEND_PID" >> "$PID_FILE"
-    
-    sleep 5
-    if curl -s http://127.0.0.1:8150/ > /dev/null; then
+
+    FRONTEND_OK=false
+    for _ in 1 2 3 4 5 6 7 8 10 12; do
+        sleep 1
+        if curl -s http://127.0.0.1:8150/ > /dev/null 2>&1; then
+            FRONTEND_OK=true
+            break
+        fi
+    done
+    if [ "$FRONTEND_OK" = true ]; then
         echo "      ✓ 前端服务启动成功 (PID: $FRONTEND_PID)"
     else
-        echo "      ⚠ 前端服务启动中，可能需要更长时间..."
+        echo "      ✗ 前端服务启动失败"
+        echo "      日志: $LOG_DIR/frontend.log"
+        tail -8 "$LOG_DIR/frontend.log" 2>/dev/null | sed 's/^/        /'
     fi
 }
 
