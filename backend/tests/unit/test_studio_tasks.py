@@ -56,3 +56,33 @@ def test_create_and_list_studio_task(client):
     tasks = r2.json()["tasks"]
     assert len(tasks) == 1
     assert tasks[0]["id"] == body["id"]
+
+
+def test_patch_studio_task_restores_selection_and_prompts(client):
+    tid = client.post("/api/lookbook/studio-tasks", json={}).json()["id"]
+    r = client.patch(
+        f"/api/lookbook/studio-tasks/{tid}",
+        json={
+            "model_id": "model-1",
+            "model_name": "模特 A",
+            "clothing_ids": ["cloth-1", "cloth-2"],
+            "reference_id": "ref-1",
+            "size": "3:4",
+            "quantity": 4,
+            "business_context": {"merchant_need": "主图", "target_audience": "女性"},
+            "acceptance_criteria": "验收标准",
+            "prompts": [{"index": 0, "angle_name": "正面", "prompt": "提示词内容"}],
+            "status": "prompts_ready",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["model_id"] == "model-1"
+    assert body["clothing_ids"] == ["cloth-1", "cloth-2"]
+    assert body["reference_id"] == "ref-1"
+    assert body["prompts"][0]["prompt"] == "提示词内容"
+    assert body["status"] == "prompts_ready"
+
+    r2 = client.get(f"/api/lookbook/studio-tasks/{tid}")
+    assert r2.status_code == 200
+    assert r2.json()["model_name"] == "模特 A"

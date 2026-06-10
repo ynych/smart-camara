@@ -130,6 +130,7 @@ const LookbookStudio: React.FC = () => {
   const [previewItem, setPreviewItem] = useState<any>(null);
   const loadedSectionsRef = useRef<Set<string>>(new Set());
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hydratingTaskRef = useRef(false);
 
   const isEditable = studioTaskStatus !== 'completed' && studioTaskStatus !== 'generating';
   const canGenerate = isEditable && prompts.length > 0 && prompts.some((p) => p.prompt?.trim());
@@ -243,13 +244,14 @@ const LookbookStudio: React.FC = () => {
   }, [studioTaskId, isEditable, buildPatchPayload]);
 
   const scheduleSave = useCallback(() => {
-    if (!studioTaskId || !isEditable) return;
+    if (hydratingTaskRef.current || !studioTaskId || !isEditable) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => { persistStudioTask(); }, 800);
   }, [studioTaskId, isEditable, persistStudioTask]);
 
   const openTask = async (item: StudioTaskItem) => {
     setTasksLoading(true);
+    hydratingTaskRef.current = true;
     try {
       const task = await getStudioTask(item.id);
       resetEditor();
@@ -258,20 +260,22 @@ const LookbookStudio: React.FC = () => {
       setSize(task.size || '3:4');
       setQuantity(task.quantity || 4);
       const bc = task.business_context || {};
-      setMerchantNeed(bc.merchant_need || merchantNeed);
-      setTargetAudience(bc.target_audience || targetAudience);
+      setMerchantNeed(bc.merchant_need || '电商Lookbook效果图，用于商品详情页和投放素材');
+      setTargetAudience(bc.target_audience || '关注质感、通勤和日常穿搭的女性用户');
       setAcceptanceCriteria(task.acceptance_criteria || '');
       setPromptRunId(task.prompt_run_id || null);
       setPrompts((task.prompts || []).map((p: any, i: number) => ({
-        index: i,
+        index: p.index ?? i,
         angle_name: p.angle_name || `图片${i + 1}`,
         prompt: p.prompt || '',
       })));
 
-      await getGroupedMaterials({ sections: 'model,clothing,refs,scenes' }).then((res) => {
-        const mats = res.data || {};
-        setMaterials(mats);
-        restoreSelections(task, mats);
+      const res = await getGroupedMaterials({ sections: 'model,clothing,refs,scenes' });
+      const mats = res.data || {};
+      setMaterials(mats);
+      restoreSelections(task, mats);
+      ['model', 'clothing', 'refs', 'scenes', 'model,clothing,refs,scenes'].forEach((s) => {
+        loadedSectionsRef.current.add(s);
       });
 
       const step = inferStep(task);
@@ -291,12 +295,16 @@ const LookbookStudio: React.FC = () => {
         setGenerationError((task.error_message as string) || '');
       } else if (task.status === 'generating') {
         setTaskStatus('generating');
+      } else {
+        setTaskStatus('');
+        setGenerationError('');
       }
 
       setViewMode('edit');
     } catch (e: any) {
       message.error('打开任务失败: ' + (e.response?.data?.detail || e.message));
     } finally {
+      hydratingTaskRef.current = false;
       setTasksLoading(false);
     }
   };
@@ -383,6 +391,22 @@ const LookbookStudio: React.FC = () => {
         ? prev.filter((c) => c.id !== clothingItem.id)
         : [...prev, clothingItem],
     );
+    scheduleSave();
+  };
+
+  const selectModel = (item: any) => {
+    setSelectedModel((prev: any) => (prev?.id === item.id ? null : item));
+    scheduleSave();
+  };
+
+  const selectReference = (item: any) => {
+    setSelectedReference((prev: any) => (prev?.id === item.id ? null : item));
+    scheduleSave();
+  };
+
+  const selectScene = (item: any) => {
+    setSelectedScene((prev: any) => (prev?.id === item.id ? null : item));
+    scheduleSave();
   };
 
   const businessContext = {
@@ -424,6 +448,20 @@ const LookbookStudio: React.FC = () => {
       setPrompts(mapped);
       setStudioTaskStatus('prompts_ready');
       setCurrentStep(3);
+      await persistStudioTask({
+        status: 'prompts_ready',
+        prompts: mapped,
+        acceptance_criteria: criteria,
+        prompt_run_id: res.data?.prompt_run_id || null,
+        model_id: selectedModel.id,
+        model_name: selectedModel.name,
+        clothing_ids: selectedClothing.map((c) => c.id),
+        reference_id: selectedReference?.id || null,
+        scene_id: selectedScene?.id || null,
+        size,
+        quantity,
+        business_context: businessContext,
+      });
       const src = res.data?.prompt_source;
       const slug = res.data?.agent_slug || 'lookbook_prompt_agent_v1';
       if (src === 'llm') {
@@ -570,6 +608,28 @@ const LookbookStudio: React.FC = () => {
     </Card>
   );
 
+  const renderSelectionSummary = () => (
+    <Alert
+      type="info"
+      showIcon
+      style={{ marginBottom: 16 }}
+      message="已选素材"
+      description={
+        <Space direction="vertical" size={2}>
+          <span>模特：{selectedModel?.name || '未选择'}</span>
+          <span>
+            服装：
+            {selectedClothing.length > 0
+              ? selectedClothing.map((c) => c.name || c.id).join('、')
+              : '未选择'}
+          </span>
+          <span>参考图：{selectedReference?.name || '无'}</span>
+          <span>场景：{selectedScene?.name || '无'}</span>
+        </Space>
+      }
+    />
+  );
+
   const renderStep0 = () => {
     const modelCards = materials.model_cards || [];
     return (
@@ -584,7 +644,7 @@ const LookbookStudio: React.FC = () => {
                 {renderImageCard(
                   item,
                   selectedModel?.id === item.id,
-                  () => setSelectedModel(selectedModel?.id === item.id ? null : item),
+                  () => selectModel(item),
                   240,
                 )}
               </Col>
@@ -688,7 +748,7 @@ const LookbookStudio: React.FC = () => {
                 <Row gutter={[12, 12]}>
                   {refs.map((item: any) => (
                     <Col span={8} key={item.id}>
-                      {renderImageCard(item, selectedReference?.id === item.id, () => setSelectedReference(selectedReference?.id === item.id ? null : item), 150)}
+                      {renderImageCard(item, selectedReference?.id === item.id, () => selectReference(item), 150)}
                     </Col>
                   ))}
                 </Row>
@@ -702,7 +762,7 @@ const LookbookStudio: React.FC = () => {
                 <Row gutter={[12, 12]}>
                   {scenes.map((item: any) => (
                     <Col span={8} key={item.id}>
-                      {renderImageCard(item, selectedScene?.id === item.id, () => setSelectedScene(selectedScene?.id === item.id ? null : item), 150)}
+                      {renderImageCard(item, selectedScene?.id === item.id, () => selectScene(item), 150)}
                     </Col>
                   ))}
                 </Row>
@@ -715,18 +775,18 @@ const LookbookStudio: React.FC = () => {
           <h4 style={{ marginTop: 0 }}>商家需求与目标用户画像</h4>
           <Row gutter={16}>
             <Col span={12}>
-              <TextArea rows={3} value={merchantNeed} onChange={(e) => setMerchantNeed(e.target.value)} placeholder="商家需求" />
+              <TextArea rows={3} value={merchantNeed} onChange={(e) => { setMerchantNeed(e.target.value); scheduleSave(); }} placeholder="商家需求" />
             </Col>
             <Col span={12}>
-              <TextArea rows={3} value={targetAudience} onChange={(e) => setTargetAudience(e.target.value)} placeholder="目标用户画像" />
+              <TextArea rows={3} value={targetAudience} onChange={(e) => { setTargetAudience(e.target.value); scheduleSave(); }} placeholder="目标用户画像" />
             </Col>
           </Row>
           <Divider />
           <Space>
             <span>尺寸</span>
-            <Select style={{ width: 160 }} value={size} onChange={setSize} options={sizeOptions} />
+            <Select style={{ width: 160 }} value={size} onChange={(v) => { setSize(v); scheduleSave(); }} options={sizeOptions} />
             <span>数量</span>
-            <InputNumber min={1} max={8} value={quantity} onChange={(value) => setQuantity(value || 1)} />
+            <InputNumber min={1} max={8} value={quantity} onChange={(value) => { setQuantity(value || 1); scheduleSave(); }} />
             <Button icon={<ReloadOutlined />} type="primary" loading={generatingPrompts} onClick={handleGeneratePrompts}>
               生成验收标准和提示词
             </Button>
@@ -743,6 +803,7 @@ const LookbookStudio: React.FC = () => {
   const renderStep3 = () => (
     <div>
       <h3>{isEditable ? '编辑提示词' : '提示词（只读）'}</h3>
+      {renderSelectionSummary()}
       <Card size="small" title="验收标准" style={{ marginBottom: 16 }}>
         <TextArea
           rows={4}

@@ -237,7 +237,7 @@ def patch_studio_task(
 @router.post("/generate-prompt")
 async def generate_prompt(data: dict, db: Session = Depends(get_db)):
     """U3：Workflow 预览 prompts，落 prompt_run_record。"""
-    from domains.user.studio_task import apply_prompt_preview, get_studio_task, update_studio_task
+    from domains.user.studio_task import apply_prompt_preview, get_studio_task, sync_studio_task_selection
     from domains.workflow.runner import run_workflow_preview
 
     studio_task_id = data.get("studio_task_id")
@@ -254,6 +254,7 @@ async def generate_prompt(data: dict, db: Session = Depends(get_db)):
             studio_task_id=studio_task_id,
         )
         if studio_task_id:
+            sync_studio_task_selection(db, studio_task_id, data)
             apply_prompt_preview(db, studio_task_id, result)
             db.commit()
         return {

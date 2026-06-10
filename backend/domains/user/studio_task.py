@@ -138,3 +138,18 @@ def apply_prompt_preview(db, task_id: str, preview: dict[str, Any]) -> dict[str,
         "acceptance_criteria": preview.get("acceptance_criteria") or "",
         "status": "prompts_ready" if prompts else "draft",
     })
+
+
+def sync_studio_task_selection(db, task_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """从工作台请求同步素材选择与业务上下文（仅更新请求里提供的字段）。"""
+    patch: dict[str, Any] = {}
+    for key in ("model_id", "model_name", "reference_id", "scene_id", "size", "quantity", "acceptance_criteria"):
+        if key in payload and payload[key] is not None:
+            patch[key] = payload[key]
+    if "clothing_ids" in payload and payload["clothing_ids"] is not None:
+        patch["clothing_ids"] = payload["clothing_ids"]
+    if "business_context" in payload and payload["business_context"] is not None:
+        patch["business_context"] = payload["business_context"]
+    if not patch:
+        return None
+    return update_studio_task(db, task_id, patch)
