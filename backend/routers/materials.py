@@ -11,22 +11,9 @@ from tools.material_tool import MaterialTool
 from services.thumbnail_service import rebuild_missing_thumbnails
 from services.material_sync import backfill_material_columns, normalize_shoot_type, SHOOT_TYPES
 from config import UPLOADS_DIR, CONTENT_DIR, ASSETS_DIR
+from tools.image_tool import ImageTool
 
 router = APIRouter(prefix="/api/materials", tags=["素材管理"])
-
-
-def _resolve_storage_path(path: str | None) -> str | None:
-    """将历史绝对路径（如其他机器同步来的 DB）解析为当前环境的 content/assets 路径。"""
-    if not path:
-        return path
-    normalized = path.replace("\\", "/")
-    if "/content/" in normalized:
-        suffix = normalized.split("/content/", 1)[1]
-        return os.path.join(CONTENT_DIR, suffix)
-    if "/assets/" in normalized:
-        suffix = normalized.split("/assets/", 1)[1]
-        return os.path.join(ASSETS_DIR, suffix)
-    return path
 
 
 def _material_item(m: Material) -> dict:
@@ -38,8 +25,8 @@ def _material_item(m: Material) -> dict:
             pass
     outfit_set = m.outfit_set or meta.get("outfit_set") or "未分组"
     shoot_type = normalize_shoot_type(m.sub_category or meta.get("sub_category"))
-    file_path = _resolve_storage_path(m.file_path)
-    thumbnail_path = _resolve_storage_path(m.thumbnail_path)
+    file_path = ImageTool.normalize_storage_path(m.file_path)
+    thumbnail_path = ImageTool.normalize_storage_path(m.thumbnail_path)
     return {
         "id": m.id,
         "name": m.name,

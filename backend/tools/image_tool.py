@@ -26,11 +26,30 @@ class ImageTool:
         return ImageTool.SIZE_MAP.get(normalized, ImageTool.SIZE_MAP["3:4"])
 
     @staticmethod
+    def normalize_storage_path(path: str | None) -> str | None:
+        """将跨机器/历史绝对路径归一化为当前环境的 content 或 assets 路径。"""
+        if not path:
+            return path
+        normalized = path.replace("\\", "/").strip()
+        if "/content/" in normalized:
+            suffix = normalized.split("/content/", 1)[1]
+            return os.path.join(CONTENT_DIR, suffix)
+        if "/assets/" in normalized:
+            suffix = normalized.split("/assets/", 1)[1]
+            return os.path.join(ASSETS_DIR, suffix)
+        rel = normalized.lstrip("/")
+        if rel.startswith("content/"):
+            return os.path.join(CONTENT_DIR, rel[len("content/"):])
+        if rel.startswith("assets/"):
+            return os.path.join(ASSETS_DIR, rel[len("assets/"):])
+        return path
+
+    @staticmethod
     def resolve_image_path(image_path: str) -> str | None:
         """解析素材/生成图路径（支持绝对路径、content 相对路径）。"""
         if not image_path:
             return None
-        raw = image_path.strip()
+        raw = ImageTool.normalize_storage_path(image_path.strip()) or ""
         if os.path.isfile(raw):
             return raw
         candidates = [

@@ -3,6 +3,7 @@ import os
 from database import SessionLocal
 from models import Material
 from services.thumbnail_service import ensure_material_thumbnail
+from tools.image_tool import ImageTool
 
 class MaterialTool:
     """素材管理工具"""
@@ -66,8 +67,8 @@ class MaterialTool:
             "name": material.name,
             "type": material.type,
             "category": material.category,
-            "file_path": material.file_path,
-            "thumbnail_path": material.thumbnail_path,
+            "file_path": ImageTool.normalize_storage_path(material.file_path),
+            "thumbnail_path": ImageTool.normalize_storage_path(material.thumbnail_path),
             "parent_dir": material.parent_dir or meta.get("parent_dir"),
             "sub_category": material.sub_category or meta.get("sub_category"),
             "outfit_set": material.outfit_set or meta.get("outfit_set"),
