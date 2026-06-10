@@ -6,16 +6,18 @@
 
 ```
 content/
-├── 模特卡/              # 模特参考图（每张一个文件）
-├── 服装素材/
-│   └── {套装名称}/      # 如「春季通勤」
-│       ├── 时尚拍摄/    # 可选子分类目录
-│       └── *.jpg        # 或直接放在套装目录下
-├── lookbook参考/        # Lookbook 风格参考图
-└── 场景素材/            # 场景/背景图（可选）
+├── model-cards/         # 模特参考图（每张一个文件）
+├── clothing/
+│   └── {套装名称}/      # 如「春季通勤」（套装名可保留中文）
+│       ├── fashion-shot/  # 可选：时尚拍摄
+│       ├── mannequin/     # 可选：人台图
+│       ├── flat-lay/      # 可选：平铺图
+│       └── *.jpg          # 或直接放在套装目录下
+├── lookbook-refs/       # Lookbook 风格参考图
+└── scenes/              # 场景/背景图（可选）
 ```
 
-也支持别名目录：`场景图`、`背景素材`、`背景图`、`lookbook参考` 等，扫描逻辑见 `backend/routers/materials.py`。
+启动时会自动将旧的中文目录名迁移为上述英文名（见 `backend/services/content_path_migration.py`）。
 
 ## 格式要求
 

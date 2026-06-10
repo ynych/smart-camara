@@ -34,6 +34,8 @@ async def lifespan(app: FastAPI):
     """应用生命周期：启动时初始化数据库和默认数据"""
     Base.metadata.create_all(bind=engine)
     migrate_db()
+    from services.content_path_migration import run_content_path_migration
+    run_content_path_migration()
     init_default_data()
     _backfill_materials()
     from services.seed_admin_data import seed_admin_data

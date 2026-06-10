@@ -1,6 +1,6 @@
 /**
  * 将 content/ 目录的绝对路径转为前端可访问的 URL
- * 输入: /workspace/content/模特卡/xxx.jpg
+ * 输入: /workspace/content/model-cards/xxx.jpg
  * 输出: /content/%E6%A8%A1%E7%89%B9%E5%8D%A1/xxx.jpg
  */
 import { API_BASE } from './apiBase';

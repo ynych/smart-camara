@@ -2,6 +2,7 @@ import base64
 import os
 import httpx
 from config import get_image_api_config, CONTENT_DIR, ASSETS_DIR
+from content_dirs import rewrite_content_path
 
 class ImageTool:
     """生图API调用工具 - 支持文生图和图生图（含多图融合）"""
@@ -32,14 +33,15 @@ class ImageTool:
             return path
         normalized = path.replace("\\", "/").strip()
         if "/content/" in normalized:
-            suffix = normalized.split("/content/", 1)[1]
+            suffix = rewrite_content_path(normalized.split("/content/", 1)[1])
             return os.path.join(CONTENT_DIR, suffix)
         if "/assets/" in normalized:
             suffix = normalized.split("/assets/", 1)[1]
             return os.path.join(ASSETS_DIR, suffix)
         rel = normalized.lstrip("/")
         if rel.startswith("content/"):
-            return os.path.join(CONTENT_DIR, rel[len("content/"):])
+            suffix = rewrite_content_path(rel[len("content/"):])
+            return os.path.join(CONTENT_DIR, suffix)
         if rel.startswith("assets/"):
             return os.path.join(ASSETS_DIR, rel[len("assets/"):])
         return path

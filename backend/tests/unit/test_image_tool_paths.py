@@ -9,7 +9,7 @@ from tools.image_tool import ImageTool
 
 
 def test_resolve_mac_content_path_on_current_machine():
-    rel = "lookbook参考/sample-ref.jpg"
+    rel = "lookbook-refs/sample-ref.jpg"
     target = os.path.join(CONTENT_DIR, rel)
     os.makedirs(os.path.dirname(target), exist_ok=True)
     with open(target, "wb") as f:
@@ -21,6 +21,6 @@ def test_resolve_mac_content_path_on_current_machine():
 
 
 def test_resolve_relative_content_prefix():
-    rel = "lookbook参考/foo.jpg"
+    rel = "lookbook-refs/foo.jpg"
     normalized = ImageTool.normalize_storage_path(f"content/{rel}")
     assert normalized == os.path.join(CONTENT_DIR, rel)

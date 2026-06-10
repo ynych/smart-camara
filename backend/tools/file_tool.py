@@ -2,6 +2,14 @@ import os
 import uuid
 import shutil
 from config import UPLOADS_DIR, GENERATED_DIR, CONTENT_DIR
+from content_dirs import (
+    DIR_CLOTHING,
+    DIR_LOOKBOOK_REFS,
+    DIR_MODEL_CARDS,
+    DIR_SCENES,
+    parent_dir_for,
+    shoot_type_to_dir,
+)
 
 class FileTool:
     """文件存储工具"""
@@ -22,23 +30,23 @@ class FileTool:
         """保存到 content/ 目录结构，与扫描导入一致。"""
         filename = FileTool._safe_filename(original_filename)
         if category == "model":
-            target_dir = os.path.join(CONTENT_DIR, "模特卡")
-            parent_dir = "模特卡"
+            target_dir = os.path.join(CONTENT_DIR, DIR_MODEL_CARDS)
+            parent_dir = parent_dir_for("model")
             outfit = None
             shoot = None
         elif category == "clothing":
             outfit = (outfit_set or "未分组").strip()
-            shoot = (shoot_type or "时尚拍摄").strip()
-            target_dir = os.path.join(CONTENT_DIR, "服装素材", outfit, shoot)
-            parent_dir = f"服装素材/{outfit}"
+            shoot_dir = shoot_type_to_dir(shoot_type)
+            target_dir = os.path.join(CONTENT_DIR, DIR_CLOTHING, outfit, shoot_dir)
+            parent_dir = parent_dir_for("clothing", outfit)
         elif category in ("lookbook_ref", "reference"):
-            target_dir = os.path.join(CONTENT_DIR, "lookbook参考")
-            parent_dir = "lookbook参考"
+            target_dir = os.path.join(CONTENT_DIR, DIR_LOOKBOOK_REFS)
+            parent_dir = parent_dir_for("lookbook_ref")
             outfit = None
             shoot = None
         elif category in ("scene", "background"):
-            target_dir = os.path.join(CONTENT_DIR, "场景素材")
-            parent_dir = "场景素材"
+            target_dir = os.path.join(CONTENT_DIR, DIR_SCENES)
+            parent_dir = parent_dir_for("scene")
             outfit = None
             shoot = None
         else:

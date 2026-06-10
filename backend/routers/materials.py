@@ -11,6 +11,14 @@ from tools.material_tool import MaterialTool
 from services.thumbnail_service import rebuild_missing_thumbnails
 from services.material_sync import backfill_material_columns, normalize_shoot_type, SHOOT_TYPES
 from config import UPLOADS_DIR, CONTENT_DIR, ASSETS_DIR
+from content_dirs import (
+    DIR_CLOTHING,
+    DIR_MODEL_CARDS,
+    SCAN_SIMPLE_DIRS,
+    parent_dir_for,
+    resolve_top_dir,
+    shoot_type_from_dir,
+)
 from tools.image_tool import ImageTool
 
 router = APIRouter(prefix="/api/materials", tags=["素材管理"])
@@ -147,19 +155,19 @@ def upload_material(
             shoot_type=shoot_type,
         )
         shoot = normalize_shoot_type(shoot_type) if category == "clothing" else None
-        meta = {"parent_dir": "服装素材/" + outfit_set if outfit_set else None}
+        meta = {"parent_dir": parent_dir_for(category, outfit_set) if category == "clothing" else None}
         if category == "clothing":
             meta = {
-                "parent_dir": f"服装素材/{outfit_set}",
+                "parent_dir": parent_dir_for("clothing", outfit_set),
                 "outfit_set": outfit_set,
                 "sub_category": shoot,
             }
         elif category == "model":
-            meta = {"parent_dir": "模特卡"}
+            meta = {"parent_dir": parent_dir_for("model")}
         elif category == "lookbook_ref":
-            meta = {"parent_dir": "lookbook参考"}
+            meta = {"parent_dir": parent_dir_for("lookbook_ref")}
         elif category == "scene":
-            meta = {"parent_dir": "场景素材"}
+            meta = {"parent_dir": parent_dir_for("scene")}
 
         mid = MaterialTool.create(
             name=file.filename,
@@ -216,9 +224,10 @@ def scan_default_materials(db: Session = Depends(get_db)):
     def is_image(filename):
         return os.path.splitext(filename)[1].lower() in IMAGE_EXTS
 
-    # 1. 扫描 content/模特卡/
-    model_dir = os.path.join(CONTENT_DIR, "模特卡")
-    if os.path.isdir(model_dir):
+    # 1. 扫描 content/model-cards/
+    model_dir = resolve_top_dir(CONTENT_DIR, DIR_MODEL_CARDS)
+    if model_dir:
+        parent = parent_dir_for("model")
         for filename in os.listdir(model_dir):
             file_path = os.path.join(model_dir, filename)
             if os.path.isfile(file_path) and is_image(filename) and file_path not in existing_paths:
@@ -227,28 +236,28 @@ def scan_default_materials(db: Session = Depends(get_db)):
                     type="upload",
                     category="model",
                     file_path=file_path,
-                    metadata={"parent_dir": "模特卡"},
+                    metadata={"parent_dir": parent},
                 )
                 imported += 1
 
-    # 2. 扫描 content/服装素材/
-    clothing_dir = os.path.join(CONTENT_DIR, "服装素材")
-    if os.path.isdir(clothing_dir):
+    # 2. 扫描 content/clothing/
+    clothing_dir = resolve_top_dir(CONTENT_DIR, DIR_CLOTHING)
+    if clothing_dir:
         for outfit_name in os.listdir(clothing_dir):
             outfit_path = os.path.join(clothing_dir, outfit_name)
             if not os.path.isdir(outfit_path):
                 continue
-            # 检查是否有子目录（子分类）
             has_sub_dirs = any(
                 os.path.isdir(os.path.join(outfit_path, d))
                 for d in os.listdir(outfit_path)
             )
+            parent = parent_dir_for("clothing", outfit_name)
             if has_sub_dirs:
-                # content/服装素材/{outfit_name}/{sub_category}/files
                 for sub_name in os.listdir(outfit_path):
                     sub_path = os.path.join(outfit_path, sub_name)
                     if not os.path.isdir(sub_path):
                         continue
+                    shoot_type = shoot_type_from_dir(sub_name)
                     for filename in os.listdir(sub_path):
                         file_path = os.path.join(sub_path, filename)
                         if os.path.isfile(file_path) and is_image(filename) and file_path not in existing_paths:
@@ -258,14 +267,13 @@ def scan_default_materials(db: Session = Depends(get_db)):
                                 category="clothing",
                                 file_path=file_path,
                                 metadata={
-                                    "parent_dir": f"服装素材/{outfit_name}",
+                                    "parent_dir": parent,
                                     "outfit_set": outfit_name,
-                                    "sub_category": sub_name,
+                                    "sub_category": shoot_type,
                                 },
                             )
                             imported += 1
             else:
-                # content/服装素材/{outfit_name}/files (直接文件)
                 for filename in os.listdir(outfit_path):
                     file_path = os.path.join(outfit_path, filename)
                     if os.path.isfile(file_path) and is_image(filename) and file_path not in existing_paths:
@@ -275,24 +283,18 @@ def scan_default_materials(db: Session = Depends(get_db)):
                             category="clothing",
                             file_path=file_path,
                             metadata={
-                                "parent_dir": f"服装素材/{outfit_name}",
+                                "parent_dir": parent,
                                 "outfit_set": outfit_name,
                                 "sub_category": "时尚拍摄",
                             },
                         )
                         imported += 1
 
-    # 3. 扫描参考图、场景图/背景图
-    simple_dirs = [
-        ("lookbook参考", "lookbook_ref"),
-        ("场景素材", "scene"),
-        ("场景图", "scene"),
-        ("背景素材", "scene"),
-        ("背景图", "scene"),
-    ]
-    for dirname, category in simple_dirs:
-        target_dir = os.path.join(CONTENT_DIR, dirname)
-        if os.path.isdir(target_dir):
+    # 3. 扫描参考图、场景图
+    for dirname, category in SCAN_SIMPLE_DIRS:
+        target_dir = resolve_top_dir(CONTENT_DIR, dirname)
+        if target_dir:
+            parent = parent_dir_for("lookbook_ref" if category == "lookbook_ref" else "scene")
             for filename in os.listdir(target_dir):
                 file_path = os.path.join(target_dir, filename)
                 if os.path.isfile(file_path) and is_image(filename) and file_path not in existing_paths:
@@ -301,7 +303,7 @@ def scan_default_materials(db: Session = Depends(get_db)):
                         type="upload",
                         category=category,
                         file_path=file_path,
-                        metadata={"parent_dir": dirname},
+                        metadata={"parent_dir": parent},
                     )
                     imported += 1
 

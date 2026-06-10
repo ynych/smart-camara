@@ -13,7 +13,9 @@ def normalize_shoot_type(value: str | None) -> str:
     mapping = {
         "mannequin": "人台图",
         "flat_lay": "平铺图",
+        "flat-lay": "平铺图",
         "fashion_shot": "时尚拍摄",
+        "fashion-shot": "时尚拍摄",
     }
     return mapping.get(v, v)
 

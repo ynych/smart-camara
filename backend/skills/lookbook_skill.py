@@ -609,7 +609,7 @@ class LookbookSkill:
             ref_path = ref_item.get("file_path") or ""
             resolved = ImageTool.resolve_image_path(ref_path) if ref_path else None
             raise Exception(
-                "Lookbook 参考图文件无法读取，请检查素材是否在 content/lookbook参考 目录且路径有效"
+                "Lookbook 参考图文件无法读取，请检查素材是否在 content/lookbook-refs 目录且路径有效"
                 + (f"（路径: {ref_path}）" if ref_path else "（素材记录不存在）")
                 + (f"；解析后: {resolved}" if resolved else "")
             )
